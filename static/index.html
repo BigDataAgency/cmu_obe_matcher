@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Company-CLO Matcher</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏢 Company-CLO Matcher</h1>
+            <p class="subtitle">AI-Powered Matching of Companies to Course Learning Outcomes</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="showTab('add-company')">➕ Add Company</button>
+            <button class="tab-btn" onclick="showTab('dashboard')">📊 Dashboard</button>
+            <button class="tab-btn" onclick="showTab('companies')">🏢 Companies</button>
+            <button class="tab-btn" onclick="showTab('clos')">📚 CLO Reference</button>
+        </div>
+
+        <div id="add-company-tab" class="tab-content active">
+            <div class="card">
+                <h2>Add New Company</h2>
+                <form id="company-form">
+                    <div class="form-group">
+                        <label for="company-name">Company Name *</label>
+                        <input type="text" id="company-name" placeholder="e.g., Tech Startup Inc." required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="requirements">Requirements *</label>
+                        <textarea id="requirements" rows="6" placeholder="Describe the job requirements, technical skills, and qualifications needed..." required></textarea>
+                        <small>What skills and qualifications does this company look for?</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="culture">Company Culture</label>
+                        <textarea id="culture" rows="4" placeholder="Describe the company culture and work environment..."></textarea>
+                        <small>Optional: What is the work environment like?</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="desired-traits">Desired Traits</label>
+                        <textarea id="desired-traits" rows="4" placeholder="Describe desired personality traits and soft skills..."></textarea>
+                        <small>Optional: What personality traits and soft skills are valued?</small>
+                    </div>
+                    
+                    <button type="submit" class="btn-primary">🔍 Analyze with AI</button>
+                </form>
+                
+                <div id="analysis-result" class="result-section" style="display:none;">
+                    <h3>AI Analysis Results</h3>
+                    <div id="company-info"></div>
+                    <div id="ai-reasoning" class="reasoning-box"></div>
+                    
+                    <h4>Suggested CLOs</h4>
+                    <div id="clo-selection" class="clo-grid"></div>
+                    
+                    <div class="button-group">
+                        <button class="btn-primary" onclick="saveCompany()">💾 Save Company</button>
+                        <button class="btn-secondary" onclick="resetForm()">🔄 Start Over</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="dashboard-tab" class="tab-content">
+            <div class="card">
+                <h2>📊 CLO Analytics Dashboard</h2>
+
+                <div class="button-group" style="margin-bottom: 16px;">
+                    <button class="btn-secondary" onclick="generateMockData()">🧪 Generate 10 Mock Companies</button>
+                </div>
+
+                <div id="dashboard-empty" class="empty-state" style="display:none; margin-bottom: 20px;">
+                    <div class="empty-state-icon">📊</div>
+                    <div class="empty-state-text">No companies yet. Generate mock companies or add a company to see analytics.</div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">🏢</div>
+                        <div class="stat-value" id="total-companies">0</div>
+                        <div class="stat-label">Total Companies</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📚</div>
+                        <div class="stat-value" id="total-clos-used">0</div>
+                        <div class="stat-label">CLOs in Use</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⭐</div>
+                        <div class="stat-value" id="most-popular-clo">-</div>
+                        <div class="stat-label">Most Popular CLO</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📈</div>
+                        <div class="stat-value" id="avg-clos-per-company">0</div>
+                        <div class="stat-label">Avg CLOs/Company</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="chart-container">
+                        <h3>CLO Frequency Across Companies</h3>
+                        <canvas id="clo-frequency-chart"></canvas>
+                    </div>
+                    
+                    <div class="chart-container">
+                        <h3>Top 10 Most Demanded CLOs</h3>
+                        <canvas id="top-clos-chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-container-full">
+                    <h3>Company-CLO Heatmap</h3>
+                    <div id="heatmap-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="companies-tab" class="tab-content">
+            <div class="card">
+                <h2>All Companies</h2>
+                <div class="button-group" style="margin-bottom: 16px;">
+                    <button class="btn-secondary" onclick="generateMockData()">🧪 Generate 10 Mock Companies</button>
+                </div>
+                <div id="companies-loading" class="loading" style="display:none;">Loading companies...</div>
+                <div id="companies-list"></div>
+            </div>
+        </div>
+
+        <div id="clos-tab" class="tab-content">
+            <div class="card">
+                <h2>Course Learning Outcomes (CLOs)</h2>
+                <div id="clos-loading" class="loading" style="display:none;">Loading CLOs...</div>
+                <div id="clos-reference"></div>
+            </div>
+        </div>
+
+        <div id="company-detail-modal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeModal()">&times;</span>
+                <h2 id="modal-company-name"></h2>
+                <div id="modal-company-details"></div>
+                <h3>Selected CLOs</h3>
+                <div id="modal-clo-selection" class="clo-grid"></div>
+                <div class="button-group">
+                    <button class="btn-primary" onclick="updateCompanyCLOs()">💾 Update CLOs</button>
+                    <button class="btn-danger" onclick="deleteCompany()">🗑️ Delete Company</button>
+                    <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>© 2026 Company-CLO Matcher | Powered by OpenAI</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
