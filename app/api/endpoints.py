@@ -6,8 +6,11 @@ from app.models import (
     CompanyDetailsRequest,
     CLOSuggestionResponse,
     CompanyProfile,
+    CompanyGroup,
     UpdateCLOsRequest,
+    UpdateGroupsRequest,
     CompaniesListResponse,
+    GroupedCLOSuggestionResponse,
     CLOsListResponse,
     CLODefinition
 )
@@ -19,6 +22,26 @@ company_store = {}
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _load_valid_clo_ids() -> list[str]:
+    project_root = Path(__file__).parent.parent.parent
+    clo_file = project_root / "data" / "clo_definitions.json"
+
+    with open(clo_file, "r") as f:
+        data = json.load(f)
+    return [clo["id"] for clo in data["clos"]]
+
+
+def _union_preserve_order(lists: list[list[str]]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for items in lists:
+        for x in items:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+    return out
 
 @router.get("/clos", response_model=CLOsListResponse)
 async def list_clos():
@@ -79,6 +102,70 @@ async def analyze_company(request: CompanyDetailsRequest):
             detail=f"{str(e)}. If this is an OpenAI authentication error, make sure your .env contains OPENAI_API_KEY."
         )
 
+
+@router.post("/analyze-company-grouped", response_model=GroupedCLOSuggestionResponse)
+async def analyze_company_grouped(request: CompanyDetailsRequest):
+    try:
+        openai_service = OpenAIService()
+        result = openai_service.suggest_grouped_clos_for_company(
+            company_name=request.company_name,
+            requirements=request.requirements,
+            culture=request.culture,
+            desired_traits=request.desired_traits,
+        )
+
+        groups_raw = result.get("groups", [])
+        groups: list[CompanyGroup] = []
+        for g in groups_raw:
+            suggested = g.get("suggested_clos", [])
+            group = CompanyGroup(
+                group_id=g.get("group_id"),
+                group_name=g.get("group_name"),
+                summary=g.get("summary", ""),
+                evidence=g.get("evidence", []) or [],
+                suggested_clos=suggested,
+                selected_clos=suggested,
+                reasoning=g.get("reasoning", ""),
+            )
+            groups.append(group)
+
+        all_suggested = _union_preserve_order([g.suggested_clos for g in groups])
+        all_selected = _union_preserve_order([g.selected_clos for g in groups])
+
+        now = _now_iso()
+        existing = company_store.get(request.company_name)
+        created_at = existing["created_at"] if isinstance(existing, dict) and "created_at" in existing else now
+
+        company_store[request.company_name] = {
+            "company_name": request.company_name,
+            "requirements": request.requirements,
+            "culture": request.culture,
+            "desired_traits": request.desired_traits,
+            "ai_suggested_clos": all_suggested,
+            "selected_clos": all_selected,
+            "ai_reasoning": "Grouped analysis generated.",
+            "groups": [g.model_dump() for g in groups],
+            "created_at": created_at,
+            "updated_at": now,
+        }
+
+        return GroupedCLOSuggestionResponse(
+            company_name=request.company_name,
+            requirements=request.requirements,
+            culture=request.culture,
+            desired_traits=request.desired_traits,
+            groups=groups,
+            all_suggested_clos=all_suggested,
+            all_selected_clos=all_selected,
+            message=f"Successfully analyzed (grouped) company details for {request.company_name}",
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{str(e)}. If this is an OpenAI authentication error, make sure your .env contains OPENAI_API_KEY.",
+        )
+
 @router.get("/companies", response_model=CompaniesListResponse)
 async def list_companies():
     companies: list[CompanyProfile] = []
@@ -96,8 +183,48 @@ async def get_company(company_name: str):
             status_code=404,
             detail=f"Company '{company_name}' not found"
         )
-    
-    return CompanyProfile(**company_store[company_name])
+
+    stored = company_store[company_name]
+    if isinstance(stored, CompanyProfile):
+        return stored
+
+    return CompanyProfile(**stored)
+
+
+@router.put("/companies/{company_name}/groups", response_model=CompanyProfile)
+async def update_company_groups(company_name: str, request: UpdateGroupsRequest):
+    if company_name not in company_store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Company '{company_name}' not found",
+        )
+
+    valid_clo_ids = _load_valid_clo_ids()
+
+    updated_groups: list[dict] = []
+    for g in request.groups:
+        for clo_id in g.selected_clos:
+            if clo_id not in valid_clo_ids:
+                raise HTTPException(status_code=400, detail=f"Invalid CLO ID: {clo_id}")
+        for clo_id in g.suggested_clos:
+            if clo_id not in valid_clo_ids:
+                raise HTTPException(status_code=400, detail=f"Invalid CLO ID: {clo_id}")
+        updated_groups.append(g.model_dump())
+
+    selected_union = _union_preserve_order([g.selected_clos for g in request.groups])
+    suggested_union = _union_preserve_order([g.suggested_clos for g in request.groups])
+
+    stored = company_store[company_name]
+    if isinstance(stored, CompanyProfile):
+        stored = stored.model_dump()
+
+    stored["groups"] = updated_groups
+    stored["selected_clos"] = selected_union
+    stored["ai_suggested_clos"] = suggested_union
+    stored["updated_at"] = _now_iso()
+
+    company_store[company_name] = stored
+    return CompanyProfile(**stored)
 
 @router.put("/companies/{company_name}/clos", response_model=CompanyProfile)
 async def update_company_clos(company_name: str, request: UpdateCLOsRequest):

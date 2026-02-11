@@ -1,67 +1,101 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Company-CLO Matcher</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <title>ระบบจับคู่บริษัทกับ CLO</title>
+    <link rel="stylesheet" href="/static/styles.css?v=2">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏢 Company-CLO Matcher</h1>
-            <p class="subtitle">AI-Powered Matching of Companies to Course Learning Outcomes</p>
+            <h1>🏢 ระบบจับคู่บริษัทกับ CLO</h1>
+            <p class="subtitle">จับคู่ความต้องการของบริษัทกับผลลัพธ์การเรียนรู้ของรายวิชา (CLO) ด้วย AI</p>
         </header>
 
         <div class="tabs">
-            <button class="tab-btn active" onclick="showTab('add-company')">➕ Add Company</button>
-            <button class="tab-btn" onclick="showTab('dashboard')">📊 Dashboard</button>
-            <button class="tab-btn" onclick="showTab('companies')">🏢 Companies</button>
-            <button class="tab-btn" onclick="showTab('clos')">📚 CLO Reference</button>
+            <button class="tab-btn active" data-tab="add-company" onclick="showTab('add-company')">➕ เพิ่มบริษัท</button>
+            <button class="tab-btn" data-tab="dashboard" onclick="showTab('dashboard')">📊 แดชบอร์ด</button>
+            <button class="tab-btn" data-tab="companies" onclick="showTab('companies')">🏢 รายชื่อบริษัท</button>
+            <button class="tab-btn" data-tab="clos" onclick="showTab('clos')">📚 รายการ CLO</button>
         </div>
 
         <div id="add-company-tab" class="tab-content active">
             <div class="card">
-                <h2>Add New Company</h2>
+                <h2>เพิ่มบริษัทใหม่</h2>
                 <form id="company-form">
                     <div class="form-group">
-                        <label for="company-name">Company Name *</label>
-                        <input type="text" id="company-name" placeholder="e.g., Tech Startup Inc." required>
+                        <label>โหมดการวิเคราะห์</label>
+                        <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 6px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="radio" name="analysis-mode" value="simple" checked>
+                                <span>แบบง่าย (Simple)</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="radio" name="analysis-mode" value="grouped">
+                                <span>แบบจัดกลุ่ม (Grouped)</span>
+                            </label>
+                        </div>
+                        <small>Simple: ได้รายการ CLO แบบรวมรายการเดียว | Grouped: จัดกลุ่มเป็นธีมและเลือก CLO แยกตามธีม</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="company-name">ชื่อบริษัท *</label>
+                        <input type="text" id="company-name" placeholder="เช่น Tech Startup Inc." required>
                     </div>
                     
                     <div class="form-group">
-                        <label for="requirements">Requirements *</label>
-                        <textarea id="requirements" rows="6" placeholder="Describe the job requirements, technical skills, and qualifications needed..." required></textarea>
-                        <small>What skills and qualifications does this company look for?</small>
+                        <label for="requirements">คุณสมบัติ/ความต้องการ *</label>
+                        <textarea id="requirements" rows="6" placeholder="อธิบายความต้องการของงาน ทักษะทางเทคนิค และคุณสมบัติที่ต้องการ..." required></textarea>
+                        <small>บริษัทต้องการทักษะและคุณสมบัติแบบไหน?</small>
                     </div>
                     
                     <div class="form-group">
-                        <label for="culture">Company Culture</label>
-                        <textarea id="culture" rows="4" placeholder="Describe the company culture and work environment..."></textarea>
-                        <small>Optional: What is the work environment like?</small>
+                        <label for="culture">วัฒนธรรมองค์กร</label>
+                        <textarea id="culture" rows="4" placeholder="อธิบายวัฒนธรรมองค์กรและสภาพแวดล้อมการทำงาน..."></textarea>
+                        <small>ไม่บังคับ: บรรยากาศการทำงานเป็นอย่างไร?</small>
                     </div>
                     
                     <div class="form-group">
-                        <label for="desired-traits">Desired Traits</label>
-                        <textarea id="desired-traits" rows="4" placeholder="Describe desired personality traits and soft skills..."></textarea>
-                        <small>Optional: What personality traits and soft skills are valued?</small>
+                        <label for="desired-traits">ลักษณะ/ทักษะที่ต้องการ (Soft Skills)</label>
+                        <textarea id="desired-traits" rows="4" placeholder="อธิบายบุคลิกภาพและทักษะด้าน soft skills ที่ต้องการ..."></textarea>
+                        <small>ไม่บังคับ: ให้คุณค่ากับบุคลิกและทักษะด้านไหน?</small>
                     </div>
                     
-                    <button type="submit" class="btn-primary">🔍 Analyze with AI</button>
+                    <button type="submit" class="btn-primary">🔍 วิเคราะห์ด้วย AI</button>
                 </form>
                 
                 <div id="analysis-result" class="result-section" style="display:none;">
-                    <h3>AI Analysis Results</h3>
+                    <h3>ผลการวิเคราะห์จาก AI</h3>
                     <div id="company-info"></div>
                     <div id="ai-reasoning" class="reasoning-box"></div>
-                    
-                    <h4>Suggested CLOs</h4>
-                    <div id="clo-selection" class="clo-grid"></div>
+
+                    <div id="simple-analysis" style="display:block;">
+                        <h4>CLO ที่แนะนำ</h4>
+                        <div id="clo-selection" class="clo-grid"></div>
+                    </div>
+
+                    <div id="grouped-analysis" style="display:none;">
+                        <div class="grouped-results-layout" style="margin-top: 16px;">
+                            <div class="grouped-results-left">
+                                <div class="card" style="margin-top: 0;">
+                                    <h4>กลุ่ม (แก้ไขได้)</h4>
+                                    <div id="groups-editor"></div>
+                                </div>
+                            </div>
+                            <div class="grouped-results-right">
+                                <div class="card" style="margin-top: 0;">
+                                    <h4>สรุป CLO ที่เลือกทั้งหมด (รวมจากทุกกลุ่ม)</h4>
+                                    <div id="union-clos-summary"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     
                     <div class="button-group">
-                        <button class="btn-primary" onclick="saveCompany()">💾 Save Company</button>
-                        <button class="btn-secondary" onclick="resetForm()">🔄 Start Over</button>
+                        <button class="btn-primary" onclick="saveCompany()">💾 บันทึกบริษัท</button>
+                        <button class="btn-secondary" onclick="resetForm()">🔄 เริ่มใหม่</button>
                     </div>
                 </div>
             </div>
@@ -69,74 +103,79 @@
 
         <div id="dashboard-tab" class="tab-content">
             <div class="card">
-                <h2>📊 CLO Analytics Dashboard</h2>
+                <h2>📊 แดชบอร์ดวิเคราะห์ CLO</h2>
 
                 <div class="button-group" style="margin-bottom: 16px;">
-                    <button class="btn-secondary" onclick="generateMockData()">🧪 Generate 10 Mock Companies</button>
+                    <button class="btn-secondary" onclick="generateMockData()">🧪 สร้างบริษัทตัวอย่าง 10 ราย</button>
                 </div>
 
                 <div id="dashboard-empty" class="empty-state" style="display:none; margin-bottom: 20px;">
                     <div class="empty-state-icon">📊</div>
-                    <div class="empty-state-text">No companies yet. Generate mock companies or add a company to see analytics.</div>
+                    <div class="empty-state-text">ยังไม่มีบริษัทในระบบ ลองสร้างบริษัทตัวอย่างหรือเพิ่มบริษัทเพื่อดูสถิติ</div>
                 </div>
                 
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon">🏢</div>
                         <div class="stat-value" id="total-companies">0</div>
-                        <div class="stat-label">Total Companies</div>
+                        <div class="stat-label">จำนวนบริษัททั้งหมด</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon">📚</div>
                         <div class="stat-value" id="total-clos-used">0</div>
-                        <div class="stat-label">CLOs in Use</div>
+                        <div class="stat-label">จำนวน CLO ที่ถูกใช้</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon">⭐</div>
                         <div class="stat-value" id="most-popular-clo">-</div>
-                        <div class="stat-label">Most Popular CLO</div>
+                        <div class="stat-label">CLO ที่พบบ่อยที่สุด</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon">📈</div>
                         <div class="stat-value" id="avg-clos-per-company">0</div>
-                        <div class="stat-label">Avg CLOs/Company</div>
+                        <div class="stat-label">ค่าเฉลี่ย CLO ต่อบริษัท</div>
                     </div>
                 </div>
 
                 <div class="dashboard-grid">
                     <div class="chart-container">
-                        <h3>CLO Frequency Across Companies</h3>
+                        <h3>ความถี่ของ CLO ในแต่ละบริษัท</h3>
                         <canvas id="clo-frequency-chart"></canvas>
                     </div>
                     
                     <div class="chart-container">
-                        <h3>Top 10 Most Demanded CLOs</h3>
+                        <h3>Top 10 CLO ที่เป็นที่ต้องการสูงสุด</h3>
                         <canvas id="top-clos-chart"></canvas>
                     </div>
                 </div>
 
                 <div class="chart-container-full">
-                    <h3>Company-CLO Heatmap</h3>
+                    <h3>Heatmap บริษัท - CLO</h3>
                     <div id="heatmap-container"></div>
+                </div>
+
+                <div class="chart-container-full">
+                    <h3>ตารางสรุป: บริษัท / กลุ่ม / CLO ของแต่ละกลุ่ม</h3>
+                    <div id="dashboard-groups-table"></div>
                 </div>
             </div>
         </div>
 
         <div id="companies-tab" class="tab-content">
             <div class="card">
-                <h2>All Companies</h2>
+                <h2>รายชื่อบริษัททั้งหมด</h2>
                 <div class="button-group" style="margin-bottom: 16px;">
-                    <button class="btn-secondary" onclick="generateMockData()">🧪 Generate 10 Mock Companies</button>
+                    <button class="btn-secondary" onclick="generateMockData()">🧪 สร้างบริษัทตัวอย่าง 10 ราย</button>
                 </div>
-                <div id="companies-loading" class="loading" style="display:none;">Loading companies...</div>
+                <div id="companies-loading" class="loading" style="display:none;">กำลังโหลดรายชื่อบริษัท...</div>
                 <div id="companies-list"></div>
             </div>
         </div>
 
         <div id="clos-tab" class="tab-content">
             <div class="card">
-                <h2>Course Learning Outcomes (CLOs)</h2>
-                <div id="clos-loading" class="loading" style="display:none;">Loading CLOs...</div>
+                <h2>ผลลัพธ์การเรียนรู้ของรายวิชา (CLO)</h2>
+                <div id="clos-loading" class="loading" style="display:none;">กำลังโหลดรายการ CLO...</div>
                 <div id="clos-reference"></div>
             </div>
         </div>
@@ -146,21 +185,40 @@
                 <span class="close" onclick="closeModal()">&times;</span>
                 <h2 id="modal-company-name"></h2>
                 <div id="modal-company-details"></div>
-                <h3>Selected CLOs</h3>
-                <div id="modal-clo-selection" class="clo-grid"></div>
+                <div id="modal-simple-editor">
+                    <h3>CLO ที่เลือก</h3>
+                    <div id="modal-clo-selection" class="clo-grid"></div>
+                </div>
+
+                <div id="modal-grouped-editor" style="display:none;">
+                    <div class="grouped-results-layout" style="margin-top: 16px;">
+                        <div class="grouped-results-left">
+                            <div class="card" style="margin-top: 0;">
+                                <h3>กลุ่ม (แก้ไขได้)</h3>
+                                <div id="modal-groups-editor"></div>
+                            </div>
+                        </div>
+                        <div class="grouped-results-right">
+                            <div class="card" style="margin-top: 0;">
+                                <h3>สรุป CLO ที่เลือกทั้งหมด (รวมจากทุกกลุ่ม)</h3>
+                                <div id="modal-union-clos-summary"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="button-group">
-                    <button class="btn-primary" onclick="updateCompanyCLOs()">💾 Update CLOs</button>
-                    <button class="btn-danger" onclick="deleteCompany()">🗑️ Delete Company</button>
-                    <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button class="btn-primary" onclick="updateCompanyCLOs()">💾 อัปเดต CLO</button>
+                    <button class="btn-danger" onclick="deleteCompany()">🗑️ ลบบริษัท</button>
+                    <button class="btn-secondary" onclick="closeModal()">ยกเลิก</button>
                 </div>
             </div>
         </div>
 
         <footer>
-            <p>© 2026 Company-CLO Matcher | Powered by OpenAI</p>
+            <p>© 2026 ระบบจับคู่บริษัทกับ CLO | ขับเคลื่อนด้วย OpenAI</p>
         </footer>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>
