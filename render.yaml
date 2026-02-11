@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: cmu-obe-matcher
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false  # ต้องใส่เองใน Dashboard
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: PYTHON_VERSION
+        value: 3.11.0
