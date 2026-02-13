@@ -1096,23 +1096,49 @@ function createHeatmap(companies, clos) {
         return;
     }
     
-    let html = '<table class="heatmap-table"><thead><tr><th>บริษัท</th>';
+    let html = '<table class="heatmap-table"><thead><tr><th>บริษัท</th><th>กลุ่ม</th>';
     
     clos.forEach(clo => {
-        html += `<th>${clo.id}</th>`;
+        html += `<th title="${escapeHtml(clo.name)} - ${escapeHtml(clo.description)}">${clo.id}</th>`;
     });
     
     html += '</tr></thead><tbody>';
     
     companies.forEach(company => {
-        html += `<tr><td class="company-name">${company.company_name}</td>`;
-        
-        clos.forEach(clo => {
-            const isSelected = company.selected_clos.includes(clo.id);
-            html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${company.company_name} - ${clo.name}"></span></td>`;
+        const groups = company && Array.isArray(company.groups) ? company.groups : [];
+
+        if (!groups.length) {
+            const selected = Array.isArray(company.selected_clos) ? company.selected_clos : [];
+            html += `<tr><td class="company-name">${escapeHtml(company.company_name || '')}</td><td class="group-name">(ไม่มีการจัดกลุ่ม)</td>`;
+
+            clos.forEach(clo => {
+                const isSelected = selected.includes(clo.id);
+                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${escapeHtml(company.company_name || '')} - (ไม่มีการจัดกลุ่ม) - ${escapeHtml(clo.name)}"></span></td>`;
+            });
+
+            html += '</tr>';
+            return;
+        }
+
+        const rowspan = groups.length;
+
+        groups.forEach((group, idx) => {
+            const groupName = (group && group.group_name) ? group.group_name : (group && group.group_id) ? group.group_id : '';
+            const selected = (group && Array.isArray(group.selected_clos)) ? group.selected_clos : [];
+
+            html += '<tr>';
+            if (idx === 0) {
+                html += `<td class="company-name" rowspan="${rowspan}">${escapeHtml(company.company_name || '')}</td>`;
+            }
+            html += `<td class="group-name">${escapeHtml(groupName)}</td>`;
+
+            clos.forEach(clo => {
+                const isSelected = selected.includes(clo.id);
+                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${escapeHtml(company.company_name || '')} - ${escapeHtml(groupName)} - ${escapeHtml(clo.name)}"></span></td>`;
+            });
+
+            html += '</tr>';
         });
-        
-        html += '</tr>';
     });
     
     html += '</tbody></table>';

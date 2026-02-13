@@ -8,6 +8,43 @@ class OpenAIService:
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key)
         self.clo_definitions = self._load_clo_definitions()
+
+    def _create_chat_completion(
+        self,
+        *,
+        messages: list,
+        max_output_tokens: int,
+        response_format: dict = None,
+        temperature: float = None,
+    ):
+        try:
+            kwargs = {
+                "model": self.settings.openai_model,
+                "messages": messages,
+                "max_completion_tokens": max_output_tokens,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+
+            return self.client.chat.completions.create(
+                **kwargs,
+            )
+        except Exception as e:
+            msg = str(e)
+            if "Unsupported parameter: 'max_completion_tokens'" in msg and "Use 'max_tokens' instead" in msg:
+                kwargs = {
+                    "model": self.settings.openai_model,
+                    "messages": messages,
+                    "max_tokens": max_output_tokens,
+                }
+                if response_format is not None:
+                    kwargs["response_format"] = response_format
+                if temperature is not None:
+                    kwargs["temperature"] = temperature
+                return self.client.chat.completions.create(**kwargs)
+            raise
     
     def _load_clo_definitions(self) -> list:
         project_root = Path(__file__).parent.parent.parent
@@ -20,10 +57,8 @@ class OpenAIService:
     
     def suggest_clos_for_company(self, company_name: str, requirements: str, 
                                   culture: str = None, desired_traits: str = None) -> dict:
-        clo_context = "\n".join([
-            f"- {clo['id']} ({clo['name']}): {clo['description']}"
-            for clo in self.clo_definitions
-        ])
+        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
+        clo_context = ", ".join(valid_clo_ids)
         
         company_details = f"""Company Name: {company_name}
 
@@ -56,19 +91,23 @@ Format:
 Respond with ONLY the JSON object, no additional text."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=[
-                    {"role": "system", "content": "You are an expert HR professional. Respond only with valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_completion_tokens=500
+            messages = [
+                {"role": "system", "content": "You are an expert HR professional."},
+                {"role": "user", "content": prompt},
+            ]
+
+            response = self._create_chat_completion(
+                messages=messages,
+                max_output_tokens=800,
+                response_format={"type": "json_object"},
+                temperature=0.2,
             )
             
             if not response.choices:
                 raise Exception(f"OpenAI returned no choices. Full response: {response}")
             
             message = response.choices[0].message
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
             content = message.content
             
             if content is None:
@@ -85,7 +124,39 @@ Respond with ONLY the JSON object, no additional text."""
             content = content.strip()
             
             if not content:
-                raise Exception("OpenAI response was empty after parsing")
+                retry = self._create_chat_completion(
+                    messages=messages,
+                    max_output_tokens=1600,
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                )
+                if not retry.choices:
+                    raise Exception(f"OpenAI returned no choices. Full response: {retry}")
+                message = retry.choices[0].message
+                finish_reason = getattr(retry.choices[0], "finish_reason", None)
+                content = (message.content or "").strip()
+                if not content:
+                    fallback_messages = [
+                        {"role": "system", "content": "You are an expert HR professional. Respond ONLY with valid JSON."},
+                        {"role": "user", "content": prompt},
+                    ]
+                    fallback = self._create_chat_completion(
+                        messages=fallback_messages,
+                        max_output_tokens=1600,
+                        response_format=None,
+                        temperature=0.2,
+                    )
+                    if not fallback.choices:
+                        raise Exception(f"OpenAI returned no choices. Full response: {fallback}")
+                    message = fallback.choices[0].message
+                    finish_reason = getattr(fallback.choices[0], "finish_reason", None)
+                    content = (message.content or "").strip()
+                    if not content:
+                        raise Exception(
+                            "OpenAI response was empty after parsing. "
+                            f"finish_reason={finish_reason}. "
+                            f"Message={message}"
+                        )
             
             try:
                 result = json.loads(content)
@@ -95,7 +166,6 @@ Respond with ONLY the JSON object, no additional text."""
             suggested_clos = result.get('suggested_clos', [])
             reasoning = result.get('reasoning', 'No reasoning provided')
             
-            valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
             suggested_clos = [clo_id for clo_id in suggested_clos if clo_id in valid_clo_ids]
             
             return {
@@ -114,10 +184,8 @@ Respond with ONLY the JSON object, no additional text."""
         culture: str = None,
         desired_traits: str = None,
     ) -> dict:
-        clo_context = "\n".join([
-            f"- {clo['id']} ({clo['name']}): {clo['description']}"
-            for clo in self.clo_definitions
-        ])
+        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
+        clo_context = ", ".join(valid_clo_ids)
 
         company_details = f"""Company Name: {company_name}
 
@@ -129,7 +197,6 @@ Requirements: {requirements}"""
         if desired_traits:
             company_details += f"\n\nDesired Traits: {desired_traits}"
 
-        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
         valid_clo_ids_context = ", ".join(valid_clo_ids)
 
         prompt = f"""You are an HR expert analyzing company requirements.
@@ -167,19 +234,23 @@ Format:
 }}"""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=[
-                    {"role": "system", "content": "You are an expert HR professional. Respond only with valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                max_completion_tokens=2000,
+            messages = [
+                {"role": "system", "content": "You are an expert HR professional."},
+                {"role": "user", "content": prompt},
+            ]
+
+            response = self._create_chat_completion(
+                messages=messages,
+                max_output_tokens=3000,
+                response_format={"type": "json_object"},
+                temperature=0.2,
             )
 
             if not response.choices:
                 raise Exception(f"OpenAI returned no choices. Full response: {response}")
 
             message = response.choices[0].message
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
             content = message.content
 
             if content is None:
@@ -196,7 +267,39 @@ Format:
             content = content.strip()
 
             if not content:
-                raise Exception("OpenAI response was empty after parsing")
+                retry = self._create_chat_completion(
+                    messages=messages,
+                    max_output_tokens=5000,
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                )
+                if not retry.choices:
+                    raise Exception(f"OpenAI returned no choices. Full response: {retry}")
+                message = retry.choices[0].message
+                finish_reason = getattr(retry.choices[0], "finish_reason", None)
+                content = (message.content or "").strip()
+                if not content:
+                    fallback_messages = [
+                        {"role": "system", "content": "You are an expert HR professional. Respond ONLY with valid JSON."},
+                        {"role": "user", "content": prompt},
+                    ]
+                    fallback = self._create_chat_completion(
+                        messages=fallback_messages,
+                        max_output_tokens=5000,
+                        response_format=None,
+                        temperature=0.2,
+                    )
+                    if not fallback.choices:
+                        raise Exception(f"OpenAI returned no choices. Full response: {fallback}")
+                    message = fallback.choices[0].message
+                    finish_reason = getattr(fallback.choices[0], "finish_reason", None)
+                    content = (message.content or "").strip()
+                    if not content:
+                        raise Exception(
+                            "OpenAI response was empty after parsing. "
+                            f"finish_reason={finish_reason}. "
+                            f"Message={message}"
+                        )
 
             try:
                 result = json.loads(content)

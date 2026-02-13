@@ -14,7 +14,7 @@ from app.models import (
     CLOsListResponse,
     CLODefinition
 )
-from app.services.openai_service import OpenAIService
+from app.services.llm_factory import get_llm_service
 
 router = APIRouter()
 
@@ -62,8 +62,8 @@ async def list_clos():
 @router.post("/analyze-company", response_model=CLOSuggestionResponse)
 async def analyze_company(request: CompanyDetailsRequest):
     try:
-        openai_service = OpenAIService()
-        result = openai_service.suggest_clos_for_company(
+        llm_service = get_llm_service()
+        result = llm_service.suggest_clos_for_company(
             company_name=request.company_name,
             requirements=request.requirements,
             culture=request.culture,
@@ -99,15 +99,15 @@ async def analyze_company(request: CompanyDetailsRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"{str(e)}. If this is an OpenAI authentication error, make sure your .env contains OPENAI_API_KEY."
+            detail=f"{str(e)}. If this is an authentication error, make sure your .env contains the correct API key (OPENAI_API_KEY or GEMINI_API_KEY)."
         )
 
 
 @router.post("/analyze-company-grouped", response_model=GroupedCLOSuggestionResponse)
 async def analyze_company_grouped(request: CompanyDetailsRequest):
     try:
-        openai_service = OpenAIService()
-        result = openai_service.suggest_grouped_clos_for_company(
+        llm_service = get_llm_service()
+        result = llm_service.suggest_grouped_clos_for_company(
             company_name=request.company_name,
             requirements=request.requirements,
             culture=request.culture,
@@ -163,7 +163,7 @@ async def analyze_company_grouped(request: CompanyDetailsRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"{str(e)}. If this is an OpenAI authentication error, make sure your .env contains OPENAI_API_KEY.",
+            detail=f"{str(e)}. If this is an authentication error, make sure your .env contains the correct API key (OPENAI_API_KEY or GEMINI_API_KEY).",
         )
 
 @router.get("/companies", response_model=CompaniesListResponse)
