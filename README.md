@@ -4,7 +4,8 @@ An AI-powered system that matches companies to relevant Course Learning Outcomes
 
 ## Features
 
-- **AI-Powered Analysis**: Uses OpenAI GPT-4o-mini to analyze company details and suggest relevant CLOs
+- **AI-Powered Analysis**: Uses OpenAI GPT-4o-mini or Google Gemini to analyze company details and suggest relevant CLOs
+- **Flexible LLM Provider**: Switch between OpenAI and Gemini (free tier available)
 - **Interactive CLO Selection**: Users can add or remove CLOs from AI suggestions
 - **Company Management**: Full CRUD operations for company profiles
 - **Modern Web Interface**: Clean, responsive UI for easy interaction
@@ -19,7 +20,9 @@ cmu_obe_matcher/
 │   ├── models.py                  # Pydantic models for validation
 │   ├── config.py                  # Configuration and environment variables
 │   ├── services/
-│   │   └── openai_service.py     # OpenAI integration for CLO suggestion
+│   │   ├── openai_service.py     # OpenAI integration for CLO suggestion
+│   │   ├── gemini_service.py     # Google Gemini integration for CLO suggestion
+│   │   └── llm_factory.py        # Factory to select LLM provider
 │   └── api/
 │       └── endpoints.py           # API route handlers
 ├── data/
@@ -60,9 +63,22 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and add your OpenAI API key:
+Edit `.env` and configure your preferred LLM provider:
 
+#### Option A: Using Gemini (Free)
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-1.5-flash
 ```
+
+Get your free Gemini API key from: https://aistudio.google.com/app/apikey
+
+#### Option B: Using OpenAI
+
+```env
+LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-your-actual-api-key-here
 OPENAI_MODEL=gpt-4o-mini
 ```
@@ -244,14 +260,23 @@ The system uses 15 Course Learning Outcomes (CLOs):
 ## How It Works
 
 1. **Company Analysis**: User inputs company details (requirements, culture, desired traits)
-2. **AI Processing**: OpenAI analyzes the details and identifies relevant CLOs
+2. **AI Processing**: OpenAI or Gemini analyzes the details and identifies relevant CLOs
 3. **User Refinement**: User can add or remove CLOs from AI suggestions
 4. **Storage**: Company profile with selected CLOs is stored in memory
+
+## LLM Provider Selection
+
+The system supports two LLM providers:
+
+- **Gemini (Recommended for Free Tier)**: Google's Gemini 1.5 Flash offers free API access with generous quotas
+- **OpenAI**: GPT-4o-mini provides high-quality analysis (paid API)
+
+Switch between providers by changing `LLM_PROVIDER` in your `.env` file. Both providers use the same interface, so no code changes are needed.
 
 ## Technical Stack
 
 - **FastAPI**: Modern web framework for building APIs
-- **OpenAI**: GPT-4o-mini for intelligent company analysis
+- **OpenAI / Gemini**: GPT-4o-mini or Gemini 1.5 Flash for intelligent company analysis
 - **Pydantic**: Data validation using Python type annotations
 - **Uvicorn**: ASGI server for running FastAPI
 - **Vanilla JavaScript**: Frontend interaction without heavy frameworks
@@ -272,7 +297,8 @@ The project follows PEP 8 guidelines.
 
 - Company data is stored in-memory and will be lost when the server restarts
 - For production use, consider implementing database persistence
-- OpenAI API key is required for the system to function
+- Either OpenAI or Gemini API key is required for the system to function
+- Gemini offers a free tier, making it ideal for development and testing
 
 ## License
 

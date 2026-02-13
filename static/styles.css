@@ -671,9 +671,11 @@ footer {
 
 .heatmap-table th,
 .heatmap-table td {
-    padding: 10px;
+    padding: 4px 6px;
     text-align: center;
-    border: 1px solid #e9ecef;
+    border: 1px solid #e2e8f0;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .heatmap-table th {
@@ -685,6 +687,16 @@ footer {
     z-index: 10;
 }
 
+.heatmap-table th:first-child {
+    left: 0;
+    z-index: 30;
+}
+
+.heatmap-table th:nth-child(2) {
+    left: 260px;
+    z-index: 30;
+}
+
 .heatmap-table td.company-name {
     background: #f8f9fa;
     font-weight: 600;
@@ -692,12 +704,28 @@ footer {
     position: sticky;
     left: 0;
     z-index: 5;
+    min-width: 260px;
+}
+
+.heatmap-table td.group-name {
+    background: #fcfcfd;
+    text-align: left;
+    font-weight: 600;
+    color: #4a5568;
+    position: sticky;
+    left: 260px;
+    z-index: 4;
+    min-width: 220px;
+}
+
+.heatmap-table tr.company-separator td {
+    border-top: 3px solid #e2e8f0;
 }
 
 .heatmap-cell {
-    width: 40px;
-    height: 40px;
-    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    border-radius: 3px;
     display: inline-block;
     transition: transform 0.2s;
 }
