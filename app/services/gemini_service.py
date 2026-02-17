@@ -3,22 +3,14 @@ import re
 from pathlib import Path
 import google.generativeai as genai
 from app.config import get_settings
+from app.services.csv_loader import CSVLoaderService
 
 class GeminiService:
     def __init__(self):
         self.settings = get_settings()
         genai.configure(api_key=self.settings.gemini_api_key)
         self.model = genai.GenerativeModel(self.settings.gemini_model)
-        self.clo_definitions = self._load_clo_definitions()
-    
-    def _load_clo_definitions(self) -> list:
-        project_root = Path(__file__).parent.parent.parent
-        clo_file = project_root / "data" / "clo_definitions.json"
-        
-        with open(clo_file, 'r') as f:
-            data = json.load(f)
-        
-        return data['clos']
+        self.csv_loader = CSVLoaderService()
 
     def _strip_code_fences(self, content: str) -> str:
         content = content.strip()
@@ -123,75 +115,6 @@ class GeminiService:
                     raise Exception(
                         f"Failed to parse {error_prefix} response as JSON. Response was: {content[:preview_chars]}... Error: {str(e)}"
                     )
-    
-    def suggest_clos_for_company(self, company_name: str, requirements: str, 
-                                  culture: str = None, desired_traits: str = None) -> dict:
-        clo_context = "\n".join([
-            f"- {clo['id']} ({clo['name']}): {clo['description']}"
-            for clo in self.clo_definitions
-        ])
-        
-        company_details = f"""Company Name: {company_name}
-
-Requirements: {requirements}"""
-        
-        if culture:
-            company_details += f"\n\nCulture: {culture}"
-        
-        if desired_traits:
-            company_details += f"\n\nDesired Traits: {desired_traits}"
-        
-        prompt = f"""You are an HR expert analyzing company requirements to identify relevant Course Learning Outcomes (CLOs).
-
-Given the following CLOs:
-
-{clo_context}
-
-Analyze this company's details and identify which CLOs are most relevant:
-
-{company_details}
-
-Return ONLY a valid JSON object with a list of relevant CLO IDs and reasoning. Do NOT assign weights or rankings. Just identify which CLOs match the company's needs.
-
-Format:
-{{
-  "suggested_clos": ["CLO01", "CLO02", "CLO05"],
-  "reasoning": "Explanation of why these CLOs were selected"
-}}
-
-Respond with ONLY the JSON object, no additional text."""
-
-        try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config={
-                    "temperature": 0.7,
-                    "response_mime_type": "application/json",
-                    "max_output_tokens": 500,
-                }
-            )
-            
-            if not response.text:
-                raise Exception(f"Gemini returned empty response. Full response: {response}")
-            
-            content = response.text
-            result = self._parse_json(content, error_prefix="Gemini", preview_chars=200)
-            
-            suggested_clos = result.get('suggested_clos', [])
-            if not isinstance(suggested_clos, list):
-                suggested_clos = []
-            reasoning = result.get('reasoning', 'No reasoning provided')
-            
-            valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
-            suggested_clos = [clo_id for clo_id in suggested_clos if clo_id in valid_clo_ids]
-            
-            return {
-                'suggested_clos': suggested_clos,
-                'reasoning': reasoning
-            }
-            
-        except Exception as e:
-            raise Exception(f"Error analyzing company details with Gemini: {str(e)}")
 
 
     def suggest_grouped_clos_for_company(
@@ -201,10 +124,19 @@ Respond with ONLY the JSON object, no additional text."""
         culture: str = None,
         desired_traits: str = None,
     ) -> dict:
+        clo_definitions = self.csv_loader.load_all_clos()
+        
+        if not clo_definitions:
+            raise Exception("No CLOs found in the system")
+        
+        # Build context with curriculum_id and course_id
         clo_context = "\n".join([
-            f"- {clo['id']} ({clo['name']}): {clo['description']}"
-            for clo in self.clo_definitions
+            f"- CLO_ID={clo['id']} (curriculum_id={clo['curriculum_id']}, course_id={clo['course_id']}): {clo['description']}"
+            for clo in clo_definitions
         ])
+        
+        valid_clo_ids = [clo['id'] for clo in clo_definitions]
+        valid_clo_ids_context = ", ".join(valid_clo_ids[:50]) + ("..." if len(valid_clo_ids) > 50 else "")
 
         company_details = f"""Company Name: {company_name}
 
@@ -216,12 +148,9 @@ Requirements: {requirements}"""
         if desired_traits:
             company_details += f"\n\nDesired Traits: {desired_traits}"
 
-        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
-        valid_clo_ids_context = ", ".join(valid_clo_ids)
-
         prompt = f"""You are an HR expert analyzing company requirements.
 
-Given the following CLOs:
+Given the following CLOs (Course Learning Outcomes) from various curricula and courses:
 
 {clo_context}
 
@@ -231,14 +160,15 @@ Analyze this company's details:
 
 Task:
 1) Create 3-7 dynamic groups (themes) summarizing what the company is asking for.
-2) For each group, match it to one or more CLO IDs from this allowed list only: {valid_clo_ids_context}
-3) Write group_name, summary, and reasoning in Thai.
+2) For each group, match it to one or more CLO IDs from the available CLOs.
+3) For each CLO you suggest, you MUST also include its curriculum_id and course_id.
+4) Write group_name, summary, and reasoning in Thai.
 
 Rules:
 - Return ONLY valid JSON (no markdown).
 - group_id must be a short stable identifier like "grp_1", "grp_2", etc.
 - evidence must be a list of 1-3 short quotes/snippets taken from the company details (keep original language).
-- suggested_clos must contain only valid CLO IDs.
+- suggested_clos must be an array of objects with format: {{"clo_id": "22", "curriculum_id": 9, "course_id": 9}}
 - Each group object MUST include: group_id, group_name, summary, evidence, suggested_clos, reasoning.
 - group_name must be a short editable Thai title.
 - summary must be 1-2 lines in Thai.
@@ -253,8 +183,11 @@ Format:
       "group_id": "grp_1",
       "group_name": "<short editable title>",
       "summary": "<1-2 lines>",
-      "evidence": ["<snippet>", "<snippet>"] ,
-      "suggested_clos": ["CLO01", "CLO02"],
+      "evidence": ["<snippet>", "<snippet>"],
+      "suggested_clos": [
+        {{"clo_id": "22", "curriculum_id": 9, "course_id": 9}},
+        {{"clo_id": "23", "curriculum_id": 9, "course_id": 9}}
+      ],
       "reasoning": "<why these CLOs match this group>"
     }}
   ]
@@ -297,6 +230,9 @@ Format:
             if not isinstance(groups, list):
                 groups = []
 
+            # Build a lookup map for CLO validation
+            clo_lookup = {clo['id']: clo for clo in clo_definitions}
+
             sanitized_groups = []
             for g in groups:
                 if not isinstance(g, dict):
@@ -305,8 +241,41 @@ Format:
                 suggested = g.get("suggested_clos", [])
                 if not isinstance(suggested, list):
                     suggested = []
-                suggested = [self._normalize_clo_id(c) for c in suggested]
-                suggested = [c for c in suggested if c in valid_clo_ids]
+                
+                # Parse suggested_clos which can be array of objects or array of strings
+                suggested_clo_contexts = []
+                for item in suggested:
+                    if isinstance(item, dict):
+                        # New format: {"clo_id": "22", "curriculum_id": 9, "course_id": 9}
+                        clo_id = str(item.get("clo_id", "")).strip()
+                        if clo_id in clo_lookup:
+                            # Safely convert to int, handling None and empty strings
+                            curriculum_id_raw = item.get("curriculum_id")
+                            course_id_raw = item.get("course_id")
+                            curriculum_id = int(curriculum_id_raw) if curriculum_id_raw not in (None, '', 0) else 0
+                            course_id = int(course_id_raw) if course_id_raw not in (None, '', 0) else 0
+                            
+                            suggested_clo_contexts.append({
+                                "clo_id": clo_id,
+                                "curriculum_id": curriculum_id,
+                                "course_id": course_id
+                            })
+                    elif isinstance(item, str):
+                        # Old format: just CLO ID string
+                        clo_id = item.strip()
+                        if clo_id in clo_lookup:
+                            clo_info = clo_lookup[clo_id]
+                            # Safely convert to int, handling None and empty strings
+                            curriculum_id_str = clo_info.get("curriculum_id", '')
+                            course_id_str = clo_info.get("course_id", '')
+                            curriculum_id = int(curriculum_id_str) if curriculum_id_str else 0
+                            course_id = int(course_id_str) if course_id_str else 0
+                            
+                            suggested_clo_contexts.append({
+                                "clo_id": clo_id,
+                                "curriculum_id": curriculum_id,
+                                "course_id": course_id
+                            })
 
                 evidence = g.get("evidence", [])
                 if not isinstance(evidence, list):
@@ -324,7 +293,8 @@ Format:
                         "group_name": group_name,
                         "summary": summary,
                         "evidence": evidence,
-                        "suggested_clos": suggested,
+                        "suggested_clos": [ctx["clo_id"] for ctx in suggested_clo_contexts],
+                        "suggested_clo_contexts": suggested_clo_contexts,
                         "reasoning": reasoning,
                     }
                 )
@@ -333,3 +303,72 @@ Format:
 
         except Exception as e:
             raise Exception(f"Error analyzing company details with Gemini: {str(e)}")
+
+    def suggest_company_details(
+        self,
+        company_name: str,
+        brief_description: str = None,
+        partial_requirements: str = None,
+    ) -> dict:
+        """Generate company details suggestions based on company name and brief hints."""
+        
+        context = f"Company Name: {company_name}"
+        if brief_description:
+            context += f"\n\nBrief Description: {brief_description}"
+        if partial_requirements:
+            context += f"\n\nPartial Requirements (user started writing): {partial_requirements}"
+
+        prompt = f"""You are an HR expert helping someone write a job posting.
+
+Given this information about a company:
+
+{context}
+
+Task:
+Generate realistic and detailed job requirements for this company. Include:
+1) **requirements**: Technical skills, qualifications, and experience needed (3-5 bullet points)
+2) **culture**: Company culture and work environment description (2-3 sentences)
+3) **desired_traits**: Personality traits and soft skills desired (3-4 traits)
+
+Rules:
+- Write in Thai language
+- Be specific and realistic based on the company name and description
+- If partial_requirements were provided, expand and improve them
+- Make it sound professional and appealing
+- Return ONLY valid JSON (no markdown)
+- IMPORTANT: Output MUST be strict JSON. Do NOT include any raw newline characters inside JSON strings; use \\n for line breaks.
+
+Format:
+{{
+  "requirements": "<detailed requirements in Thai>",
+  "culture": "<culture description in Thai>",
+  "desired_traits": "<desired traits in Thai>"
+}}"""
+
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.7,
+                    "response_mime_type": "application/json",
+                    "max_output_tokens": 1500,
+                },
+            )
+
+            if not response.text:
+                raise Exception(f"Gemini returned empty response. Full response: {response}")
+
+            content = response.text
+            try:
+                result = self._parse_json(content, error_prefix="Gemini", preview_chars=1000)
+            except Exception as e:
+                raise Exception(f"Failed to parse Gemini response: {str(e)}")
+
+            return {
+                "requirements": result.get("requirements", ""),
+                "culture": result.get("culture", ""),
+                "desired_traits": result.get("desired_traits", ""),
+            }
+
+        except Exception as e:
+            raise Exception(f"Error suggesting company details with Gemini: {str(e)}")

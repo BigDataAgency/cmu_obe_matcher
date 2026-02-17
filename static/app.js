@@ -3,7 +3,7 @@ const API_BASE = '/api/v1';
 let allCLOs = [];
 let currentAnalysis = null;
 let currentCompanyName = null;
-let currentAnalysisMode = 'simple';
+let currentAnalysisMode = 'grouped';
 
 function showTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(tab => {
@@ -29,6 +29,58 @@ function showTab(tabName) {
     } else if (tabName === 'clos') {
         loadCLOsReference();
     }
+}
+
+function normalizeCompanyToGrouped(company) {
+    const groups = company && Array.isArray(company.groups) ? company.groups : [];
+    if (groups.length > 0) return company;
+
+    const selected = Array.isArray(company.selected_clos) ? company.selected_clos : [];
+    const suggested = Array.isArray(company.ai_suggested_clos) ? company.ai_suggested_clos : selected;
+
+    return {
+        ...company,
+        groups: [
+            {
+                group_id: 'grp_1',
+                group_name: '(ไม่มีการจัดกลุ่ม)',
+                summary: '',
+                evidence: [],
+                suggested_clos: suggested,
+                selected_clos: selected,
+                reasoning: ''
+            }
+        ]
+    };
+}
+
+function buildCLOContextMap(obj) {
+    const ctx = obj && Array.isArray(obj.clo_context) ? obj.clo_context : [];
+    const map = new Map();
+    ctx.forEach(item => {
+        if (!item) return;
+        const cloId = String(item.clo_id || '').trim();
+        if (!cloId) return;
+        map.set(cloId, {
+            curriculum_id: item.curriculum_id,
+            course_id: item.course_id
+        });
+    });
+    return map;
+}
+
+function formatCLOLabel(cloId, ctxMap) {
+    const clo = allCLOs.find(c => c.id === cloId);
+    const name = clo ? (clo.name || '') : '';
+    const desc = clo ? (clo.description || '') : '';
+    const ctx = ctxMap ? ctxMap.get(cloId) : null;
+    const descTrim = String(desc).trim();
+    const shortDesc = descTrim ? `${descTrim.slice(0, 90)}${descTrim.length > 90 ? '…' : ''}` : '';
+    const title = name ? `${cloId}: ${name}` : `${cloId}`;
+    if (ctx && (ctx.curriculum_id || ctx.course_id)) {
+        return `${title} (curriculum=${ctx.curriculum_id}, course=${ctx.course_id})${shortDesc ? ` — ${shortDesc}` : ''}`;
+    }
+    return `${title}${shortDesc ? ` — ${shortDesc}` : ''}`;
 }
 
 function renderDashboardGroupsTable(companies, clos) {
@@ -107,29 +159,7 @@ function renderDashboardGroupsTable(companies, clos) {
     `;
 }
 
-async function generateMockData() {
-    try {
-        const response = await fetch(`${API_BASE}/generate-mock-data`, {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(text || `Request failed (${response.status})`);
-        }
-
-        await loadCompanies();
-
-        const dashboardTab = document.getElementById('dashboard-tab');
-        if (dashboardTab && dashboardTab.classList.contains('active')) {
-            await loadDashboard();
-        }
-
-        alert('สร้างบริษัทตัวอย่างเรียบร้อยแล้ว!');
-    } catch (error) {
-        alert(`เกิดข้อผิดพลาดในการสร้างข้อมูลตัวอย่าง: ${error.message}`);
-    }
-}
+ 
 
 async function loadCLOs() {
     try {
@@ -149,16 +179,14 @@ document.getElementById('company-form').addEventListener('submit', async (e) => 
     const culture = document.getElementById('culture').value;
     const desiredTraits = document.getElementById('desired-traits').value;
 
-    const modeInput = document.querySelector('input[name="analysis-mode"]:checked');
-    currentAnalysisMode = modeInput ? modeInput.value : 'simple';
+    currentAnalysisMode = 'grouped';
     
     const submitBtn = e.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.textContent = '🔄 กำลังวิเคราะห์...';
     
     try {
-        const endpoint = currentAnalysisMode === 'grouped' ? 'analyze-company-grouped' : 'analyze-company';
-        const response = await fetch(`${API_BASE}/${endpoint}`, {
+        const response = await fetch(`${API_BASE}/analyze-company-grouped`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -178,11 +206,7 @@ document.getElementById('company-form').addEventListener('submit', async (e) => 
         
         const data = await response.json();
         currentAnalysis = data;
-        if (currentAnalysisMode === 'grouped') {
-            displayGroupedAnalysisResults(data);
-        } else {
-            displayAnalysisResults(data);
-        }
+        displayGroupedAnalysisResults(data);
         
     } catch (error) {
         alert(`เกิดข้อผิดพลาด: ${error.message}`);
@@ -192,58 +216,6 @@ document.getElementById('company-form').addEventListener('submit', async (e) => 
     }
 });
 
-function displayAnalysisResults(data) {
-    const resultSection = document.getElementById('analysis-result');
-    const companyInfo = document.getElementById('company-info');
-    const aiReasoning = document.getElementById('ai-reasoning');
-    const cloSelection = document.getElementById('clo-selection');
-
-    const simpleSection = document.getElementById('simple-analysis');
-    const groupedSection = document.getElementById('grouped-analysis');
-    if (simpleSection) simpleSection.style.display = 'block';
-    if (groupedSection) groupedSection.style.display = 'none';
-    
-    companyInfo.innerHTML = `
-        <h4>${data.company_name}</h4>
-        <p><strong>คุณสมบัติ/ความต้องการ:</strong> ${data.requirements}</p>
-        ${data.culture ? `<p><strong>วัฒนธรรมองค์กร:</strong> ${data.culture}</p>` : ''}
-        ${data.desired_traits ? `<p><strong>ลักษณะ/ทักษะที่ต้องการ:</strong> ${data.desired_traits}</p>` : ''}
-    `;
-    
-    aiReasoning.innerHTML = `
-        <strong>เหตุผลจาก AI:</strong>
-        <p>${data.ai_reasoning}</p>
-    `;
-    
-    cloSelection.innerHTML = '';
-    allCLOs.forEach(clo => {
-        const isSelected = data.ai_suggested_clos.includes(clo.id);
-        const cloItem = document.createElement('div');
-        cloItem.className = `clo-item ${isSelected ? 'selected' : ''}`;
-        cloItem.innerHTML = `
-            <div class="clo-item-header">
-                <input type="checkbox" id="clo-${clo.id}" ${isSelected ? 'checked' : ''}>
-                <span class="clo-item-id">${clo.id}</span>
-                <span class="clo-item-name">${clo.name}</span>
-            </div>
-            <div class="clo-item-desc">${clo.description}</div>
-        `;
-        
-        cloItem.addEventListener('click', (e) => {
-            if (e.target.type !== 'checkbox') {
-                const checkbox = cloItem.querySelector('input[type="checkbox"]');
-                checkbox.checked = !checkbox.checked;
-            }
-            cloItem.classList.toggle('selected');
-        });
-        
-        cloSelection.appendChild(cloItem);
-    });
-    
-    resultSection.style.display = 'block';
-    resultSection.scrollIntoView({ behavior: 'smooth' });
-}
-
 function displayGroupedAnalysisResults(data) {
     const resultSection = document.getElementById('analysis-result');
     const companyInfo = document.getElementById('company-info');
@@ -251,9 +223,7 @@ function displayGroupedAnalysisResults(data) {
     const groupsEditor = document.getElementById('groups-editor');
     const unionSummary = document.getElementById('union-clos-summary');
 
-    const simpleSection = document.getElementById('simple-analysis');
     const groupedSection = document.getElementById('grouped-analysis');
-    if (simpleSection) simpleSection.style.display = 'none';
     if (groupedSection) groupedSection.style.display = 'block';
 
     companyInfo.innerHTML = `
@@ -265,14 +235,25 @@ function displayGroupedAnalysisResults(data) {
 
     aiReasoning.innerHTML = `
         <strong>เหตุผลจาก AI:</strong>
-        <p>ผลลัพธ์นี้ถูกจัดกลุ่มเป็นธีม คุณสามารถเปลี่ยนชื่อกลุ่ม และเลือก/ยกเลิก CLO แยกตามกลุ่มได้</p>
+        <p>ผลลัพธ์นี้ถูกจัดกลุ่มเป็นธีม แต่ละกลุ่มแสดง CLO และ PLO ที่เกี่ยวข้อง คุณสามารถเปลี่ยนชื่อกลุ่มและเลือก/ยกเลิก CLO ได้</p>
     `;
+
+    const mappedPlos = Array.isArray(data.mapped_plos) ? data.mapped_plos : [];
+    const ploMap = new Map();
+    mappedPlos.forEach(plo => {
+        if (plo && plo.id) {
+            ploMap.set(plo.id, plo);
+        }
+    });
 
     if (groupsEditor) {
         groupsEditor.innerHTML = '';
     }
 
     const groups = Array.isArray(data.groups) ? data.groups : [];
+    const ctxMap = buildCLOContextMap(data);
+    const ploRenderer = createPLORenderer(data, ctxMap);
+    
     groups.forEach(group => {
         const card = document.createElement('div');
         card.className = 'group-card';
@@ -285,38 +266,73 @@ function displayGroupedAnalysisResults(data) {
             <div class="group-card-header">
                 <input class="group-name-input" type="text" value="${escapeHtml(group.group_name)}" data-role="group-name" />
             </div>
-            <p style="margin: 0 0 8px; color: #666;">${escapeHtml(group.summary || '')}</p>
-            ${evidenceHtml ? `<div class="evidence-chips">${evidenceHtml}</div>` : ''}
-            <div class="clo-grid" data-role="group-clos"></div>
+            <p style="margin: 0 0 8px; color: #666; font-size: 14px;">${escapeHtml(group.summary || '')}</p>
+            ${evidenceHtml ? `<div class="evidence-chips" style="margin-bottom: 12px;">${evidenceHtml}</div>` : ''}
+            
+            <div class="hierarchy-section">
+                <div class="hierarchy-label">📚 CLOs ที่เลือก:</div>
+                <div class="clo-selected" data-role="group-selected"></div>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                    <select data-role="clo-picker" style="flex:1; font-size: 13px;"></select>
+                    <button type="button" class="btn-secondary" data-role="clo-add">เพิ่ม CLO</button>
+                </div>
+            </div>
+            
+            <div class="hierarchy-section" style="margin-top: 16px;">
+                <div class="hierarchy-label">🎯 PLOs ที่เกี่ยวข้อง:</div>
+                <div class="plo-display" data-role="group-plos"></div>
+            </div>
         `;
 
-        const cloGrid = card.querySelector('[data-role="group-clos"]');
+        const selectedWrap = card.querySelector('[data-role="group-selected"]');
+        const picker = card.querySelector('[data-role="clo-picker"]');
+        const addBtn = card.querySelector('[data-role="clo-add"]');
+        const ploWrap = card.querySelector('[data-role="group-plos"]');
         const selected = new Set(Array.isArray(group.selected_clos) ? group.selected_clos : []);
 
-        allCLOs.forEach(clo => {
-            const cloItem = document.createElement('div');
-            const isChecked = selected.has(clo.id);
-            cloItem.className = `clo-item ${isChecked ? 'selected' : ''}`;
-            cloItem.innerHTML = `
-                <div class="clo-item-header">
-                    <input type="checkbox" data-role="group-clo" data-clo-id="${clo.id}" ${isChecked ? 'checked' : ''}>
-                    <span class="clo-item-id">${clo.id}</span>
-                    <span class="clo-item-name">${escapeHtml(clo.name)}</span>
-                </div>
-                <div class="clo-item-desc">${escapeHtml(clo.description)}</div>
-            `;
+        picker.innerHTML = '<option value="">เลือก CLO เพื่อเพิ่ม...</option>' + allCLOs
+            .map(clo => {
+                const cid = clo.curriculum_id != null ? clo.curriculum_id : '';
+                const coid = clo.course_id != null ? clo.course_id : '';
+                const desc = (clo.description || '').trim();
+                const shortDesc = desc.length > 90 ? (desc.slice(0, 90) + '…') : desc;
+                const meta = (cid || coid) ? ` (curriculum=${cid}, course=${coid})` : '';
+                return `<option value="${escapeHtml(clo.id)}">${escapeHtml(clo.id)}${escapeHtml(meta)}: ${escapeHtml(shortDesc)}</option>`;
+            })
+            .join('');
 
-            cloItem.addEventListener('click', (e) => {
-                if (e.target.type !== 'checkbox') {
-                    const checkbox = cloItem.querySelector('input[type="checkbox"]');
-                    checkbox.checked = !checkbox.checked;
-                }
-                cloItem.classList.toggle('selected');
-                updateUnionSummary();
-            });
+        function renderSelectedChips() {
+            const ids = Array.from(selected);
+            if (ids.length === 0) {
+                selectedWrap.innerHTML = '<p style="color:#666; margin:0;">ยังไม่ได้เลือก CLO</p>';
+                return;
+            }
+            selectedWrap.innerHTML = ids.map(id => {
+                const label = formatCLOLabel(id, ctxMap);
+                return `<span class="clo-chip" data-clo-id="${escapeHtml(id)}">${escapeHtml(label)}<button type="button" class="clo-chip-remove" data-role="remove" data-clo-id="${escapeHtml(id)}">×</button></span>`;
+            }).join('');
+        }
 
-            cloGrid.appendChild(cloItem);
+        addBtn.addEventListener('click', () => {
+            const id = picker.value;
+            if (!id) return;
+            selected.add(id);
+            picker.value = '';
+            renderSelectedChips();
+            updateUnionSummary();
         });
+
+        selectedWrap.addEventListener('click', (e) => {
+            const btn = e.target;
+            if (!btn || btn.dataset.role !== 'remove') return;
+            const id = btn.dataset.cloId;
+            if (!id) return;
+            selected.delete(id);
+            renderSelectedChips();
+            updateUnionSummary();
+        });
+
+        renderSelectedChips();
 
         card.querySelector('[data-role="group-name"]').addEventListener('input', () => {
             updateUnionSummary();
@@ -341,8 +357,7 @@ function displayGroupedAnalysisResults(data) {
         }
 
         const tags = selected.map(id => {
-            const clo = allCLOs.find(c => c.id === id);
-            const label = clo ? `${id}: ${clo.name}` : id;
+            const label = formatCLOLabel(id, ctxMap);
             return `<span class="union-tag">${escapeHtml(label)}</span>`;
         }).join('');
         unionSummary.innerHTML = `<div class="union-tags">${tags}</div>`;
@@ -355,8 +370,8 @@ function getGroupedSelectedCLOs() {
     const seen = new Set();
     const out = [];
     groupsEditor.querySelectorAll('.group-card').forEach(card => {
-        card.querySelectorAll('input[data-role="group-clo"]:checked').forEach(cb => {
-            const id = cb.dataset.cloId;
+        card.querySelectorAll('[data-role="group-selected"] .clo-chip').forEach(chip => {
+            const id = chip.dataset.cloId;
             if (id && !seen.has(id)) {
                 seen.add(id);
                 out.push(id);
@@ -382,8 +397,8 @@ function buildGroupsPayloadFromUI() {
         const nameInput = card.querySelector('input[data-role="group-name"]');
         const groupName = nameInput ? nameInput.value.trim() : base.group_name;
 
-        const selectedClos = Array.from(card.querySelectorAll('input[data-role="group-clo"]:checked'))
-            .map(cb => cb.dataset.cloId)
+        const selectedClos = Array.from(card.querySelectorAll('[data-role="group-selected"] .clo-chip'))
+            .map(chip => chip.dataset.cloId)
             .filter(Boolean);
 
         payloadGroups.push({
@@ -411,56 +426,31 @@ function escapeHtml(str) {
 
 async function saveCompany() {
     try {
-        if (currentAnalysisMode === 'grouped') {
-            const groups = buildGroupsPayloadFromUI();
-            if (groups.length === 0) {
-                alert('ไม่พบกลุ่มสำหรับบันทึก กรุณากดวิเคราะห์ใหม่อีกครั้ง');
-                return;
-            }
+        const groups = buildGroupsPayloadFromUI();
+        if (groups.length === 0) {
+            alert('ไม่พบกลุ่มสำหรับบันทึก กรุณากดวิเคราะห์ใหม่อีกครั้ง');
+            return;
+        }
 
-            const unionSelected = getGroupedSelectedCLOs();
-            if (unionSelected.length === 0) {
-                alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
-                return;
-            }
+        const unionSelected = getGroupedSelectedCLOs();
+        if (unionSelected.length === 0) {
+            alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
+            return;
+        }
 
-            const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentAnalysis.company_name)}/groups`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    groups: groups
-                })
-            });
+        const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentAnalysis.company_name)}/groups`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                groups: groups
+            })
+        });
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'บันทึกกลุ่มของบริษัทไม่สำเร็จ');
-            }
-        } else {
-            const selectedCLOs = Array.from(document.querySelectorAll('#clo-selection input[type="checkbox"]:checked'))
-                .map(cb => cb.id.replace('clo-', ''));
-
-            if (selectedCLOs.length === 0) {
-                alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
-                return;
-            }
-
-            const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentAnalysis.company_name)}/clos`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    selected_clos: selectedCLOs
-                })
-            });
-
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'บันทึกบริษัทไม่สำเร็จ');
-            }
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || 'บันทึกกลุ่มของบริษัทไม่สำเร็จ');
         }
         
         alert('บันทึกบริษัทเรียบร้อยแล้ว!');
@@ -476,7 +466,7 @@ function resetForm() {
     document.getElementById('company-form').reset();
     document.getElementById('analysis-result').style.display = 'none';
     currentAnalysis = null;
-    currentAnalysisMode = 'simple';
+    currentAnalysisMode = 'grouped';
 }
 
 async function loadCompanies() {
@@ -560,44 +550,8 @@ async function viewCompanyDetail(companyName) {
             await loadCLOs();
         }
 
-        const modalSimpleEditor = document.getElementById('modal-simple-editor');
-        const modalGroupedEditor = document.getElementById('modal-grouped-editor');
-
-        if (company.groups && Array.isArray(company.groups) && company.groups.length > 0) {
-            if (modalSimpleEditor) modalSimpleEditor.style.display = 'none';
-            if (modalGroupedEditor) modalGroupedEditor.style.display = 'block';
-            renderModalGroupedEditor(company);
-        } else {
-            if (modalSimpleEditor) modalSimpleEditor.style.display = 'block';
-            if (modalGroupedEditor) modalGroupedEditor.style.display = 'none';
-
-            const modalCloSelection = document.getElementById('modal-clo-selection');
-            modalCloSelection.innerHTML = '';
-            
-            allCLOs.forEach(clo => {
-                const isSelected = company.selected_clos.includes(clo.id);
-                const cloItem = document.createElement('div');
-                cloItem.className = `clo-item ${isSelected ? 'selected' : ''}`;
-                cloItem.innerHTML = `
-                    <div class="clo-item-header">
-                        <input type="checkbox" id="modal-clo-${clo.id}" ${isSelected ? 'checked' : ''}>
-                        <span class="clo-item-id">${clo.id}</span>
-                        <span class="clo-item-name">${escapeHtml(clo.name)}</span>
-                    </div>
-                    <div class="clo-item-desc">${escapeHtml(clo.description)}</div>
-                `;
-                
-                cloItem.addEventListener('click', (e) => {
-                    if (e.target.type !== 'checkbox') {
-                        const checkbox = cloItem.querySelector('input[type="checkbox"]');
-                        checkbox.checked = !checkbox.checked;
-                    }
-                    cloItem.classList.toggle('selected');
-                });
-                
-                modalCloSelection.appendChild(cloItem);
-            });
-        }
+        const normalized = normalizeCompanyToGrouped(company);
+        renderModalGroupedEditor(normalized);
         
         document.getElementById('company-detail-modal').classList.add('active');
         
@@ -614,6 +568,7 @@ function renderModalGroupedEditor(company) {
     groupsEditor.innerHTML = '';
 
     const groups = Array.isArray(company.groups) ? company.groups : [];
+    const ctxMap = buildCLOContextMap(company);
     groups.forEach(group => {
         const card = document.createElement('div');
         card.className = 'group-card';
@@ -628,36 +583,61 @@ function renderModalGroupedEditor(company) {
             </div>
             <p style="margin: 0 0 8px; color: #666;">${escapeHtml(group.summary || '')}</p>
             ${evidenceHtml ? `<div class="evidence-chips">${evidenceHtml}</div>` : ''}
-            <div class="clo-grid" data-role="group-clos"></div>
+            <div class="clo-selected" data-role="group-selected"></div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+                <select data-role="clo-picker" style="flex:1;"></select>
+                <button type="button" class="btn-secondary" data-role="clo-add">เพิ่ม</button>
+            </div>
         `;
 
-        const cloGrid = card.querySelector('[data-role="group-clos"]');
+        const selectedWrap = card.querySelector('[data-role="group-selected"]');
+        const picker = card.querySelector('[data-role="clo-picker"]');
+        const addBtn = card.querySelector('[data-role="clo-add"]');
         const selected = new Set(Array.isArray(group.selected_clos) ? group.selected_clos : []);
 
-        allCLOs.forEach(clo => {
-            const cloItem = document.createElement('div');
-            const isChecked = selected.has(clo.id);
-            cloItem.className = `clo-item ${isChecked ? 'selected' : ''}`;
-            cloItem.innerHTML = `
-                <div class="clo-item-header">
-                    <input type="checkbox" data-role="group-clo" data-clo-id="${clo.id}" ${isChecked ? 'checked' : ''}>
-                    <span class="clo-item-id">${clo.id}</span>
-                    <span class="clo-item-name">${escapeHtml(clo.name)}</span>
-                </div>
-                <div class="clo-item-desc">${escapeHtml(clo.description)}</div>
-            `;
+        picker.innerHTML = '<option value="">เลือก CLO เพื่อเพิ่ม...</option>' + allCLOs
+            .map(clo => {
+                const cid = clo.curriculum_id != null ? clo.curriculum_id : '';
+                const coid = clo.course_id != null ? clo.course_id : '';
+                const desc = (clo.description || '').trim();
+                const shortDesc = desc.length > 90 ? (desc.slice(0, 90) + '…') : desc;
+                const meta = (cid || coid) ? ` (curriculum=${cid}, course=${coid})` : '';
+                return `<option value="${escapeHtml(clo.id)}">${escapeHtml(clo.id)}${escapeHtml(meta)}: ${escapeHtml(shortDesc)}</option>`;
+            })
+            .join('');
 
-            cloItem.addEventListener('click', (e) => {
-                if (e.target.type !== 'checkbox') {
-                    const checkbox = cloItem.querySelector('input[type="checkbox"]');
-                    checkbox.checked = !checkbox.checked;
-                }
-                cloItem.classList.toggle('selected');
-                updateUnionSummary();
-            });
+        function renderSelectedChips() {
+            const ids = Array.from(selected);
+            if (ids.length === 0) {
+                selectedWrap.innerHTML = '<p style="color:#666; margin:0;">ยังไม่ได้เลือก CLO</p>';
+                return;
+            }
+            selectedWrap.innerHTML = ids.map(id => {
+                const label = formatCLOLabel(id, ctxMap);
+                return `<span class="clo-chip" data-clo-id="${escapeHtml(id)}">${escapeHtml(label)}<button type="button" class="clo-chip-remove" data-role="remove" data-clo-id="${escapeHtml(id)}">×</button></span>`;
+            }).join('');
+        }
 
-            cloGrid.appendChild(cloItem);
+        addBtn.addEventListener('click', () => {
+            const id = picker.value;
+            if (!id) return;
+            selected.add(id);
+            picker.value = '';
+            renderSelectedChips();
+            updateUnionSummary();
         });
+
+        selectedWrap.addEventListener('click', (e) => {
+            const btn = e.target;
+            if (!btn || btn.dataset.role !== 'remove') return;
+            const id = btn.dataset.cloId;
+            if (!id) return;
+            selected.delete(id);
+            renderSelectedChips();
+            updateUnionSummary();
+        });
+
+        renderSelectedChips();
 
         card.querySelector('[data-role="group-name"]').addEventListener('input', () => {
             updateUnionSummary();
@@ -676,8 +656,7 @@ function renderModalGroupedEditor(company) {
         }
 
         const tags = selected.map(id => {
-            const clo = allCLOs.find(c => c.id === id);
-            const label = clo ? `${id}: ${clo.name}` : id;
+            const label = formatCLOLabel(id, ctxMap);
             return `<span class="union-tag">${escapeHtml(label)}</span>`;
         }).join('');
         unionSummary.innerHTML = `<div class="union-tags">${tags}</div>`;
@@ -690,8 +669,8 @@ function getModalGroupedSelectedCLOs() {
     const seen = new Set();
     const out = [];
     groupsEditor.querySelectorAll('.group-card').forEach(card => {
-        card.querySelectorAll('input[data-role="group-clo"]:checked').forEach(cb => {
-            const id = cb.dataset.cloId;
+        card.querySelectorAll('[data-role="group-selected"] .clo-chip').forEach(chip => {
+            const id = chip.dataset.cloId;
             if (id && !seen.has(id)) {
                 seen.add(id);
                 out.push(id);
@@ -717,8 +696,8 @@ function buildModalGroupsPayloadFromUI(company) {
         const nameInput = card.querySelector('input[data-role="group-name"]');
         const groupName = nameInput ? nameInput.value.trim() : base.group_name;
 
-        const selectedClos = Array.from(card.querySelectorAll('input[data-role="group-clo"]:checked'))
-            .map(cb => cb.dataset.cloId)
+        const selectedClos = Array.from(card.querySelectorAll('[data-role="group-selected"] .clo-chip'))
+            .map(chip => chip.dataset.cloId)
             .filter(Boolean);
 
         payloadGroups.push({
@@ -744,51 +723,27 @@ async function updateCompanyCLOs() {
         }
         const company = await responseCompany.json();
 
-        if (company.groups && Array.isArray(company.groups) && company.groups.length > 0) {
-            const groups = buildModalGroupsPayloadFromUI(company);
-            const unionSelected = getModalGroupedSelectedCLOs();
-            if (unionSelected.length === 0) {
-                alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
-                return;
-            }
+        const normalized = normalizeCompanyToGrouped(company);
+        const groups = buildModalGroupsPayloadFromUI(normalized);
+        const unionSelected = getModalGroupedSelectedCLOs();
+        if (unionSelected.length === 0) {
+            alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
+            return;
+        }
 
-            const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentCompanyName)}/groups`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    groups: groups
-                })
-            });
+        const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentCompanyName)}/groups`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                groups: groups
+            })
+        });
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'อัปเดตกลุ่มของบริษัทไม่สำเร็จ');
-            }
-        } else {
-            const selectedCLOs = Array.from(document.querySelectorAll('#modal-clo-selection input[type="checkbox"]:checked'))
-                .map(cb => cb.id.replace('modal-clo-', ''));
-
-            if (selectedCLOs.length === 0) {
-                alert('กรุณาเลือก CLO อย่างน้อย 1 รายการ');
-                return;
-            }
-
-            const response = await fetch(`${API_BASE}/companies/${encodeURIComponent(currentCompanyName)}/clos`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    selected_clos: selectedCLOs
-                })
-            });
-
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'อัปเดต CLO ของบริษัทไม่สำเร็จ');
-            }
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || 'อัปเดตกลุ่มของบริษัทไม่สำเร็จ');
         }
         
         alert('อัปเดต CLO ของบริษัทเรียบร้อยแล้ว!');
@@ -971,8 +926,11 @@ async function loadDashboard() {
         // Create Top 10 CLOs Chart
         createTopCLOsChart(cloFrequencyArray.slice(0, 10));
         
-        // Create Heatmap
+        // Create CLO Heatmap
         createHeatmap(companies, clos);
+        
+        // Create PLO Heatmap
+        createPLOHeatmap(companies);
 
         // Create grouped summary table
         renderDashboardGroupsTable(companies, clos);
@@ -1096,10 +1054,32 @@ function createHeatmap(companies, clos) {
         return;
     }
     
+    // Get only CLOs that are actually used by companies
+    const usedCLOIds = new Set();
+    companies.forEach(company => {
+        const selected = Array.isArray(company.selected_clos) ? company.selected_clos : [];
+        selected.forEach(id => usedCLOIds.add(id));
+    });
+    
+    const matchedCLOs = clos.filter(clo => usedCLOIds.has(clo.id));
+    
+    if (matchedCLOs.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: #999;">ยังไม่มี CLO ที่ถูก match</p>';
+        return;
+    }
+    
     let html = '<table class="heatmap-table"><thead><tr><th>บริษัท</th><th>กลุ่ม</th>';
     
-    clos.forEach(clo => {
-        html += `<th title="${escapeHtml(clo.name)} - ${escapeHtml(clo.description)}">${clo.id}</th>`;
+    // Show only matched CLOs with CLO no., curriculum_id, course_id format
+    matchedCLOs.forEach(clo => {
+        const cloNo = clo.no || '-';
+        const cloId = clo.id || '-';
+        const curriculumId = clo.curriculum_id || '-';
+        const courseId = clo.course_id || '-';
+        const desc = (clo.description || '').slice(0, 150);
+        const tooltip = `CLO No: ${escapeHtml(cloNo)}\nCLO ID: ${escapeHtml(cloId)}\nCurriculum ID: ${curriculumId}\nCourse ID: ${courseId}\nDescription: ${escapeHtml(desc)}${desc.length >= 150 ? '...' : ''}`;
+        const headerText = `CLO ${escapeHtml(cloNo)}\n(${curriculumId}/${courseId})`;
+        html += `<th title="${tooltip}" style="white-space: pre-line; font-size: 11px; line-height: 1.3;">${headerText}</th>`;
     });
     
     html += '</tr></thead><tbody>';
@@ -1111,9 +1091,11 @@ function createHeatmap(companies, clos) {
             const selected = Array.isArray(company.selected_clos) ? company.selected_clos : [];
             html += `<tr><td class="company-name">${escapeHtml(company.company_name || '')}</td><td class="group-name">(ไม่มีการจัดกลุ่ม)</td>`;
 
-            clos.forEach(clo => {
+            matchedCLOs.forEach(clo => {
                 const isSelected = selected.includes(clo.id);
-                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${escapeHtml(company.company_name || '')} - (ไม่มีการจัดกลุ่ม) - ${escapeHtml(clo.name)}"></span></td>`;
+                const desc = (clo.description || '').slice(0, 100);
+                const tooltip = `${escapeHtml(company.company_name || '')} - ${escapeHtml(clo.id)}: ${escapeHtml(clo.name || clo.id)}\n${escapeHtml(desc)}`;
+                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${tooltip}"></span></td>`;
             });
 
             html += '</tr>';
@@ -1132,9 +1114,11 @@ function createHeatmap(companies, clos) {
             }
             html += `<td class="group-name">${escapeHtml(groupName)}</td>`;
 
-            clos.forEach(clo => {
+            matchedCLOs.forEach(clo => {
                 const isSelected = selected.includes(clo.id);
-                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${escapeHtml(company.company_name || '')} - ${escapeHtml(groupName)} - ${escapeHtml(clo.name)}"></span></td>`;
+                const desc = (clo.description || '').slice(0, 100);
+                const tooltip = `${escapeHtml(company.company_name || '')} - ${escapeHtml(groupName)}\n${escapeHtml(clo.id)}: ${escapeHtml(clo.name || clo.id)}\n${escapeHtml(desc)}`;
+                html += `<td><span class="heatmap-cell ${isSelected ? 'selected' : 'not-selected'}" title="${tooltip}"></span></td>`;
             });
 
             html += '</tr>';
@@ -1145,3 +1129,89 @@ function createHeatmap(companies, clos) {
     
     container.innerHTML = html;
 }
+
+// AI Writing Help Functions
+let currentHelpField = null;
+let currentAISuggestion = null;
+
+async function helpWriteField(fieldName) {
+    const companyName = document.getElementById('company-name').value;
+    
+    if (!companyName.trim()) {
+        alert('กรุณากรอกชื่อบริษัทก่อน');
+        return;
+    }
+    
+    currentHelpField = fieldName;
+    
+    const requirements = document.getElementById('requirements').value;
+    
+    document.getElementById('ai-help-modal').classList.add('active');
+    document.getElementById('ai-help-loading').style.display = 'block';
+    document.getElementById('ai-help-content').style.display = 'none';
+    
+    try {
+        const response = await fetch(`${API_BASE}/suggest-company-details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                company_name: companyName,
+                brief_description: null,
+                partial_requirements: requirements || null
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'ไม่สามารถสร้างคำแนะนำได้');
+        }
+        
+        const data = await response.json();
+        
+        let suggestionText = '';
+        if (fieldName === 'requirements') {
+            suggestionText = data.suggested_requirements;
+            currentAISuggestion = data.suggested_requirements;
+        } else if (fieldName === 'culture') {
+            suggestionText = data.suggested_culture;
+            currentAISuggestion = data.suggested_culture;
+        } else if (fieldName === 'desired_traits') {
+            suggestionText = data.suggested_desired_traits;
+            currentAISuggestion = data.suggested_desired_traits;
+        }
+        
+        document.getElementById('ai-help-text').textContent = suggestionText;
+        document.getElementById('ai-help-loading').style.display = 'none';
+        document.getElementById('ai-help-content').style.display = 'block';
+        
+    } catch (error) {
+        alert(`เกิดข้อผิดพลาด: ${error.message}`);
+        closeAIHelpModal();
+    }
+}
+
+function useAISuggestion() {
+    if (currentHelpField && currentAISuggestion) {
+        const fieldId = currentHelpField.replace('_', '-');
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.value = currentAISuggestion;
+        }
+    }
+    closeAIHelpModal();
+}
+
+function closeAIHelpModal() {
+    document.getElementById('ai-help-modal').classList.remove('active');
+    currentHelpField = null;
+    currentAISuggestion = null;
+}
+
+window.addEventListener('click', function(event) {
+    const aiHelpModal = document.getElementById('ai-help-modal');
+    if (event.target === aiHelpModal) {
+        closeAIHelpModal();
+    }
+});

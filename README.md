@@ -120,9 +120,9 @@ Returns all available Course Learning Outcomes.
 }
 ```
 
-### 2. Analyze Company
+### 2. Analyze Company (Grouped)
 
-**POST** `/api/v1/analyze-company`
+**POST** `/api/v1/analyze-company-grouped`
 
 Analyzes company details and suggests relevant CLOs using AI.
 
@@ -181,16 +181,16 @@ Returns all company profiles.
 
 Returns details for a specific company.
 
-### 5. Update Company CLOs
+### 5. Update Company Groups
 
-**PUT** `/api/v1/companies/{company_name}/clos`
+**PUT** `/api/v1/companies/{company_name}/groups`
 
-Updates the selected CLOs for a company.
+Updates the selected groups for a company.
 
 **Request Body:**
 ```json
 {
-  "selected_clos": ["CLO01", "CLO02", "CLO03", "CLO05"]
+  "selected_groups": ["Group A", "Group B"]
 }
 ```
 
@@ -216,24 +216,14 @@ Deletes a company profile.
 ### Using cURL
 
 ```bash
-# Analyze a company
-curl -X POST "http://localhost:8000/api/v1/analyze-company" \
+# Analyze a company (grouped)
+curl -X POST "http://localhost:8000/api/v1/analyze-company-grouped" \
   -H "Content-Type: application/json" \
   -d '{
     "company_name": "Tech Startup",
-    "requirements": "Seeking graduates with Python, data analysis, and problem-solving skills",
-    "culture": "Fast-paced, innovative",
-    "desired_traits": "Team players, continuous learners"
-  }'
-
-# List all companies
-curl "http://localhost:8000/api/v1/companies"
-
-# Update company CLOs
-curl -X PUT "http://localhost:8000/api/v1/companies/Tech%20Startup/clos" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "selected_clos": ["CLO01", "CLO02", "CLO05"]
+    "requirements": "Python, data analysis, SQL",
+    "culture": "Fast-paced, collaborative",
+    "desired_traits": "Problem solving, communication"
   }'
 ```
 

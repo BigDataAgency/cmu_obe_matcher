@@ -759,3 +759,26 @@ footer {
         font-size: 2rem;
     }
 }
+
+.btn-help {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1.2rem;
+    transition: all 0.3s ease;
+    min-width: 45px;
+    height: 45px;
+    flex-shrink: 0;
+}
+
+.btn-help:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-help:active {
+    transform: translateY(0);
+}

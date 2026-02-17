@@ -1,13 +1,59 @@
 import json
+import re
 from pathlib import Path
 from openai import OpenAI
 from app.config import get_settings
+from app.services.csv_loader import CSVLoaderService
 
 class OpenAIService:
     def __init__(self):
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key)
-        self.clo_definitions = self._load_clo_definitions()
+        self.csv_loader = CSVLoaderService()
+
+    def _normalize_text(self, text: str) -> str:
+        return (text or "").lower()
+
+    def _tokenize(self, text: str) -> set[str]:
+        text = self._normalize_text(text)
+        return set(t for t in re.findall(r"[a-zA-Z0-9ก-๙]+", text) if len(t) >= 2)
+
+    def _truncate(self, s: str, max_chars: int) -> str:
+        s = (s or "").strip()
+        if len(s) <= max_chars:
+            return s
+        return s[:max_chars].rstrip() + "…"
+
+    def _select_top_clos(
+        self,
+        clos: list[dict],
+        query_text: str,
+        *,
+        top_k: int = 300,
+        desc_max_chars: int = 240,
+    ) -> list[dict]:
+        q_tokens = self._tokenize(query_text)
+        if not clos:
+            return []
+
+        if not q_tokens:
+            picked = clos[:top_k]
+        else:
+            scored: list[tuple[int, dict]] = []
+            for clo in clos:
+                desc = clo.get("description", "")
+                d_tokens = self._tokenize(desc)
+                score = len(q_tokens & d_tokens)
+                scored.append((score, clo))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            picked = [c for _, c in scored[:top_k]]
+
+        out: list[dict] = []
+        for clo in picked:
+            clo2 = dict(clo)
+            clo2["description"] = self._truncate(clo2.get("description", ""), desc_max_chars)
+            out.append(clo2)
+        return out
 
     def _create_chat_completion(
         self,
@@ -46,135 +92,6 @@ class OpenAIService:
                 return self.client.chat.completions.create(**kwargs)
             raise
     
-    def _load_clo_definitions(self) -> list:
-        project_root = Path(__file__).parent.parent.parent
-        clo_file = project_root / "data" / "clo_definitions.json"
-        
-        with open(clo_file, 'r') as f:
-            data = json.load(f)
-        
-        return data['clos']
-    
-    def suggest_clos_for_company(self, company_name: str, requirements: str, 
-                                  culture: str = None, desired_traits: str = None) -> dict:
-        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
-        clo_context = ", ".join(valid_clo_ids)
-        
-        company_details = f"""Company Name: {company_name}
-
-Requirements: {requirements}"""
-        
-        if culture:
-            company_details += f"\n\nCulture: {culture}"
-        
-        if desired_traits:
-            company_details += f"\n\nDesired Traits: {desired_traits}"
-        
-        prompt = f"""You are an HR expert analyzing company requirements to identify relevant Course Learning Outcomes (CLOs).
-
-Given the following CLOs:
-
-{clo_context}
-
-Analyze this company's details and identify which CLOs are most relevant:
-
-{company_details}
-
-Return ONLY a valid JSON object with a list of relevant CLO IDs and reasoning. Do NOT assign weights or rankings. Just identify which CLOs match the company's needs.
-
-Format:
-{{
-  "suggested_clos": ["CLO01", "CLO02", "CLO05"],
-  "reasoning": "Explanation of why these CLOs were selected"
-}}
-
-Respond with ONLY the JSON object, no additional text."""
-
-        try:
-            messages = [
-                {"role": "system", "content": "You are an expert HR professional."},
-                {"role": "user", "content": prompt},
-            ]
-
-            response = self._create_chat_completion(
-                messages=messages,
-                max_output_tokens=800,
-                response_format={"type": "json_object"},
-                temperature=0.2,
-            )
-            
-            if not response.choices:
-                raise Exception(f"OpenAI returned no choices. Full response: {response}")
-            
-            message = response.choices[0].message
-            finish_reason = getattr(response.choices[0], "finish_reason", None)
-            content = message.content
-            
-            if content is None:
-                raise Exception(f"OpenAI message.content is None. Message: {message}")
-            
-            content = content.strip()
-            
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
-            
-            if not content:
-                retry = self._create_chat_completion(
-                    messages=messages,
-                    max_output_tokens=1600,
-                    response_format={"type": "json_object"},
-                    temperature=0.2,
-                )
-                if not retry.choices:
-                    raise Exception(f"OpenAI returned no choices. Full response: {retry}")
-                message = retry.choices[0].message
-                finish_reason = getattr(retry.choices[0], "finish_reason", None)
-                content = (message.content or "").strip()
-                if not content:
-                    fallback_messages = [
-                        {"role": "system", "content": "You are an expert HR professional. Respond ONLY with valid JSON."},
-                        {"role": "user", "content": prompt},
-                    ]
-                    fallback = self._create_chat_completion(
-                        messages=fallback_messages,
-                        max_output_tokens=1600,
-                        response_format=None,
-                        temperature=0.2,
-                    )
-                    if not fallback.choices:
-                        raise Exception(f"OpenAI returned no choices. Full response: {fallback}")
-                    message = fallback.choices[0].message
-                    finish_reason = getattr(fallback.choices[0], "finish_reason", None)
-                    content = (message.content or "").strip()
-                    if not content:
-                        raise Exception(
-                            "OpenAI response was empty after parsing. "
-                            f"finish_reason={finish_reason}. "
-                            f"Message={message}"
-                        )
-            
-            try:
-                result = json.loads(content)
-            except json.JSONDecodeError as e:
-                raise Exception(f"Failed to parse OpenAI response as JSON. Response was: {content[:200]}... Error: {str(e)}")
-            
-            suggested_clos = result.get('suggested_clos', [])
-            reasoning = result.get('reasoning', 'No reasoning provided')
-            
-            suggested_clos = [clo_id for clo_id in suggested_clos if clo_id in valid_clo_ids]
-            
-            return {
-                'suggested_clos': suggested_clos,
-                'reasoning': reasoning
-            }
-            
-        except Exception as e:
-            raise Exception(f"Error analyzing company details with OpenAI: {str(e)}")
 
 
     def suggest_grouped_clos_for_company(
@@ -184,8 +101,10 @@ Respond with ONLY the JSON object, no additional text."""
         culture: str = None,
         desired_traits: str = None,
     ) -> dict:
-        valid_clo_ids = [clo['id'] for clo in self.clo_definitions]
-        clo_context = ", ".join(valid_clo_ids)
+        clo_definitions_all = self.csv_loader.load_all_clos()
+        
+        if not clo_definitions_all:
+            raise Exception("No CLOs found in the system")
 
         company_details = f"""Company Name: {company_name}
 
@@ -197,11 +116,29 @@ Requirements: {requirements}"""
         if desired_traits:
             company_details += f"\n\nDesired Traits: {desired_traits}"
 
-        valid_clo_ids_context = ", ".join(valid_clo_ids)
+        # Reduce prompt size: select only the most relevant CLOs and truncate descriptions.
+        clo_definitions = self._select_top_clos(
+            clo_definitions_all,
+            query_text=company_details,
+            top_k=300,
+            desc_max_chars=240,
+        )
+        if not clo_definitions:
+            raise Exception("No CLOs available after filtering")
+
+        # Build context with curriculum_id and course_id
+        clo_context = "\n".join([
+            f"- CLO_ID={clo['id']} (curriculum_id={clo['curriculum_id']}, course_id={clo['course_id']}): {clo['description']}"
+            for clo in clo_definitions
+        ])
+
+        valid_clo_ids = [clo['id'] for clo in clo_definitions]
+
+        valid_clo_ids_context = ", ".join(valid_clo_ids[:50]) + ("..." if len(valid_clo_ids) > 50 else "")
 
         prompt = f"""You are an HR expert analyzing company requirements.
 
-Given the following CLOs:
+Given the following CLOs (Course Learning Outcomes) from various curricula and courses:
 
 {clo_context}
 
@@ -211,13 +148,19 @@ Analyze this company's details:
 
 Task:
 1) Create 3-7 dynamic groups (themes) summarizing what the company is asking for.
-2) For each group, match it to one or more CLO IDs from this allowed list only: {valid_clo_ids_context}
+2) For each group, match it to one or more CLO IDs from the available CLOs listed above.
+3) For each CLO you suggest, you MUST also include its curriculum_id and course_id.
+4) Write group_name, summary, and reasoning in Thai.
 
 Rules:
 - Return ONLY valid JSON (no markdown).
 - group_id must be a short stable identifier like "grp_1", "grp_2", etc.
-- evidence must be a list of short quotes/snippets taken from the company details.
-- suggested_clos must contain only valid CLO IDs.
+- evidence must be a list of 1-3 short quotes/snippets taken from the company details (keep original language).
+- suggested_clos must be an array of objects with format: {{"clo_id": "22", "curriculum_id": 9, "course_id": 9}}
+- Each group object MUST include: group_id, group_name, summary, evidence, suggested_clos, reasoning.
+- group_name must be a short editable Thai title.
+- summary must be 1-2 lines in Thai.
+- reasoning must be in Thai and explain why the suggested CLOs fit.
 
 Format:
 {{
@@ -226,8 +169,11 @@ Format:
       "group_id": "grp_1",
       "group_name": "<short editable title>",
       "summary": "<1-2 lines>",
-      "evidence": ["<snippet>", "<snippet>"] ,
-      "suggested_clos": ["CLO01", "CLO02"],
+      "evidence": ["<snippet>", "<snippet>"],
+      "suggested_clos": [
+        {{"clo_id": "22", "curriculum_id": 9, "course_id": 9}},
+        {{"clo_id": "23", "curriculum_id": 9, "course_id": 9}}
+      ],
       "reasoning": "<why these CLOs match this group>"
     }}
   ]
@@ -243,7 +189,7 @@ Format:
                 messages=messages,
                 max_output_tokens=3000,
                 response_format={"type": "json_object"},
-                temperature=0.2,
+                temperature=None,
             )
 
             if not response.choices:
@@ -271,7 +217,7 @@ Format:
                     messages=messages,
                     max_output_tokens=5000,
                     response_format={"type": "json_object"},
-                    temperature=0.2,
+                    temperature=None,
                 )
                 if not retry.choices:
                     raise Exception(f"OpenAI returned no choices. Full response: {retry}")
@@ -287,7 +233,7 @@ Format:
                         messages=fallback_messages,
                         max_output_tokens=5000,
                         response_format=None,
-                        temperature=0.2,
+                        temperature=None,
                     )
                     if not fallback.choices:
                         raise Exception(f"OpenAI returned no choices. Full response: {fallback}")
@@ -312,6 +258,9 @@ Format:
             if not isinstance(groups, list):
                 groups = []
 
+            # Build a lookup map for CLO validation (filtered set)
+            clo_lookup = {clo['id']: clo for clo in clo_definitions}
+
             sanitized_groups = []
             for g in groups:
                 if not isinstance(g, dict):
@@ -320,7 +269,41 @@ Format:
                 suggested = g.get("suggested_clos", [])
                 if not isinstance(suggested, list):
                     suggested = []
-                suggested = [c for c in suggested if c in valid_clo_ids]
+                
+                # Parse suggested_clos which can be array of objects or array of strings
+                suggested_clo_contexts = []
+                for item in suggested:
+                    if isinstance(item, dict):
+                        # New format: {"clo_id": "22", "curriculum_id": 9, "course_id": 9}
+                        clo_id = str(item.get("clo_id", "")).strip()
+                        if clo_id in clo_lookup:
+                            # Safely convert to int, handling None and empty strings
+                            curriculum_id_raw = item.get("curriculum_id")
+                            course_id_raw = item.get("course_id")
+                            curriculum_id = int(curriculum_id_raw) if curriculum_id_raw not in (None, '', 0) else 0
+                            course_id = int(course_id_raw) if course_id_raw not in (None, '', 0) else 0
+                            
+                            suggested_clo_contexts.append({
+                                "clo_id": clo_id,
+                                "curriculum_id": curriculum_id,
+                                "course_id": course_id
+                            })
+                    elif isinstance(item, str):
+                        # Old format: just CLO ID string
+                        clo_id = item.strip()
+                        if clo_id in clo_lookup:
+                            clo_info = clo_lookup[clo_id]
+                            # Safely convert to int, handling None and empty strings
+                            curriculum_id_str = clo_info.get("curriculum_id", '')
+                            course_id_str = clo_info.get("course_id", '')
+                            curriculum_id = int(curriculum_id_str) if curriculum_id_str else 0
+                            course_id = int(course_id_str) if course_id_str else 0
+                            
+                            suggested_clo_contexts.append({
+                                "clo_id": clo_id,
+                                "curriculum_id": curriculum_id,
+                                "course_id": course_id
+                            })
 
                 evidence = g.get("evidence", [])
                 if not isinstance(evidence, list):
@@ -338,7 +321,8 @@ Format:
                         "group_name": group_name,
                         "summary": summary,
                         "evidence": evidence,
-                        "suggested_clos": suggested,
+                        "suggested_clos": [ctx["clo_id"] for ctx in suggested_clo_contexts],
+                        "suggested_clo_contexts": suggested_clo_contexts,
                         "reasoning": reasoning,
                     }
                 )
@@ -347,3 +331,176 @@ Format:
 
         except Exception as e:
             raise Exception(f"Error analyzing company details with OpenAI: {str(e)}")
+
+    def suggest_company_details(
+        self,
+        company_name: str,
+        brief_description: str = None,
+        partial_requirements: str = None,
+    ) -> dict:
+        """Generate company details suggestions based on company name and brief hints."""
+        
+        context = f"Company Name: {company_name}"
+        if brief_description:
+            context += f"\n\nBrief Description: {brief_description}"
+        if partial_requirements:
+            context += f"\n\nPartial Requirements (user started writing): {partial_requirements}"
+
+        prompt = f"""You are an HR expert helping someone write a job posting.
+
+Given this information about a company:
+
+{context}
+
+Task:
+Generate realistic and detailed job requirements for this company. Include:
+1) **requirements**: Technical skills, qualifications, and experience needed (3-5 bullet points)
+2) **culture**: Company culture and work environment description (2-3 sentences)
+3) **desired_traits**: Personality traits and soft skills desired (3-4 traits)
+
+Rules:
+- Write in Thai language
+- Be specific and realistic based on the company name and description
+- If partial_requirements were provided, expand and improve them
+- Make it sound professional and appealing
+- Return ONLY valid JSON (no markdown)
+
+Format:
+{{
+  "requirements": "<detailed requirements in Thai>",
+  "culture": "<culture description in Thai>",
+  "desired_traits": "<desired traits in Thai>"
+}}"""
+
+        try:
+            messages = [
+                {"role": "system", "content": "You are an expert HR professional helping write job postings."},
+                {"role": "user", "content": prompt},
+            ]
+
+            def _clean_content(raw: str) -> str:
+                if raw is None:
+                    return ""
+                c = str(raw).strip()
+                if c.startswith("```json"):
+                    c = c[7:]
+                if c.startswith("```"):
+                    c = c[3:]
+                if c.endswith("```"):
+                    c = c[:-3]
+                return c.strip()
+
+            def _extract_json_object(raw: str) -> str:
+                s = _clean_content(raw)
+                if not s:
+                    return ""
+                start = s.find("{")
+                if start < 0:
+                    return ""
+                depth = 0
+                in_str = False
+                escape = False
+                for i in range(start, len(s)):
+                    ch = s[i]
+                    if in_str:
+                        if escape:
+                            escape = False
+                        elif ch == "\\":
+                            escape = True
+                        elif ch == '"':
+                            in_str = False
+                        continue
+                    if ch == '"':
+                        in_str = True
+                        continue
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            return s[start : i + 1].strip()
+                return ""
+
+            response = self._create_chat_completion(
+                messages=messages,
+                max_output_tokens=1500,
+                response_format={"type": "json_object"},
+                temperature=None,
+            )
+
+            if not response.choices:
+                raise Exception(f"OpenAI returned no choices. Full response: {response}")
+
+            message = response.choices[0].message
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+            content = _clean_content(message.content)
+
+            if not content:
+                retry = self._create_chat_completion(
+                    messages=messages,
+                    max_output_tokens=1500,
+                    response_format={"type": "json_object"},
+                    temperature=None,
+                )
+                if not retry.choices:
+                    raise Exception(f"OpenAI returned no choices. Full response: {retry}")
+                message = retry.choices[0].message
+                finish_reason = getattr(retry.choices[0], "finish_reason", finish_reason)
+                content = _clean_content(message.content)
+
+            parsed = None
+            parse_error = None
+            if content:
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError as e:
+                    parse_error = e
+
+            if parsed is None:
+                extracted = _extract_json_object(content)
+                if extracted:
+                    try:
+                        parsed = json.loads(extracted)
+                    except json.JSONDecodeError as e:
+                        parse_error = e
+
+            if parsed is None:
+                fallback_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are an expert HR professional. Respond ONLY with valid JSON. No markdown. No extra text.",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+                fallback = self._create_chat_completion(
+                    messages=fallback_messages,
+                    max_output_tokens=1500,
+                    response_format=None,
+                    temperature=None,
+                )
+                if not fallback.choices:
+                    raise Exception(f"OpenAI returned no choices. Full response: {fallback}")
+                message = fallback.choices[0].message
+                finish_reason = getattr(fallback.choices[0], "finish_reason", finish_reason)
+                raw = message.content or ""
+                cleaned = _clean_content(raw)
+                extracted = _extract_json_object(cleaned) or cleaned
+                try:
+                    parsed = json.loads(extracted)
+                except json.JSONDecodeError as e:
+                    preview = (cleaned or raw).strip().replace("\n", " ")
+                    raise Exception(
+                        "Failed to parse OpenAI response as JSON. "
+                        f"finish_reason={finish_reason}. "
+                        f"Error={str(e)}. "
+                        f"ResponsePreview={(preview[:800] + ('...' if len(preview) > 800 else ''))}"
+                    )
+
+            return {
+                "requirements": str(parsed.get("requirements", "") or ""),
+                "culture": str(parsed.get("culture", "") or ""),
+                "desired_traits": str(parsed.get("desired_traits", "") or ""),
+            }
+
+        except Exception as e:
+            raise Exception(f"Error suggesting company details with OpenAI: {str(e)}")

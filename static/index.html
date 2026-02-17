@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ระบบจับคู่บริษัทกับ CLO</title>
     <link rel="stylesheet" href="/static/styles.css?v=2">
+    <link rel="stylesheet" href="/static/hierarchy_layout.css?v=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/plo_renderer.js?v=2"></script>
+    <script src="/static/searchable_dropdown.js?v=1"></script>
+    <script src="/static/plo_heatmap.js?v=1"></script>
 </head>
 <body>
     <div class="container">
@@ -26,40 +30,34 @@
                 <h2>เพิ่มบริษัทใหม่</h2>
                 <form id="company-form">
                     <div class="form-group">
-                        <label>โหมดการวิเคราะห์</label>
-                        <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 6px;">
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="radio" name="analysis-mode" value="simple" checked>
-                                <span>แบบง่าย (Simple)</span>
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="radio" name="analysis-mode" value="grouped">
-                                <span>แบบจัดกลุ่ม (Grouped)</span>
-                            </label>
-                        </div>
-                        <small>Simple: ได้รายการ CLO แบบรวมรายการเดียว | Grouped: จัดกลุ่มเป็นธีมและเลือก CLO แยกตามธีม</small>
-                    </div>
-
-                    <div class="form-group">
                         <label for="company-name">ชื่อบริษัท *</label>
                         <input type="text" id="company-name" placeholder="เช่น Tech Startup Inc." required>
                     </div>
                     
                     <div class="form-group">
                         <label for="requirements">คุณสมบัติ/ความต้องการ *</label>
-                        <textarea id="requirements" rows="6" placeholder="อธิบายความต้องการของงาน ทักษะทางเทคนิค และคุณสมบัติที่ต้องการ..." required></textarea>
+                        <div style="display:flex; gap:8px; align-items:flex-start;">
+                            <textarea id="requirements" rows="6" placeholder="อธิบายความต้องการของงาน ทักษะทางเทคนิค และคุณสมบัติที่ต้องการ..." required style="flex:1;"></textarea>
+                            <button type="button" class="btn-help" onclick="helpWriteField('requirements')" title="ให้ AI ช่วยเขียน">✨</button>
+                        </div>
                         <small>บริษัทต้องการทักษะและคุณสมบัติแบบไหน?</small>
                     </div>
                     
                     <div class="form-group">
                         <label for="culture">วัฒนธรรมองค์กร</label>
-                        <textarea id="culture" rows="4" placeholder="อธิบายวัฒนธรรมองค์กรและสภาพแวดล้อมการทำงาน..."></textarea>
+                        <div style="display:flex; gap:8px; align-items:flex-start;">
+                            <textarea id="culture" rows="4" placeholder="อธิบายวัฒนธรรมองค์กรและสภาพแวดล้อมการทำงาน..." style="flex:1;"></textarea>
+                            <button type="button" class="btn-help" onclick="helpWriteField('culture')" title="ให้ AI ช่วยเขียน">✨</button>
+                        </div>
                         <small>ไม่บังคับ: บรรยากาศการทำงานเป็นอย่างไร?</small>
                     </div>
                     
                     <div class="form-group">
                         <label for="desired-traits">ลักษณะ/ทักษะที่ต้องการ (Soft Skills)</label>
-                        <textarea id="desired-traits" rows="4" placeholder="อธิบายบุคลิกภาพและทักษะด้าน soft skills ที่ต้องการ..."></textarea>
+                        <div style="display:flex; gap:8px; align-items:flex-start;">
+                            <textarea id="desired-traits" rows="4" placeholder="อธิบายบุคลิกภาพและทักษะด้าน soft skills ที่ต้องการ..." style="flex:1;"></textarea>
+                            <button type="button" class="btn-help" onclick="helpWriteField('desired_traits')" title="ให้ AI ช่วยเขียน">✨</button>
+                        </div>
                         <small>ไม่บังคับ: ให้คุณค่ากับบุคลิกและทักษะด้านไหน?</small>
                     </div>
                     
@@ -71,12 +69,7 @@
                     <div id="company-info"></div>
                     <div id="ai-reasoning" class="reasoning-box"></div>
 
-                    <div id="simple-analysis" style="display:block;">
-                        <h4>CLO ที่แนะนำ</h4>
-                        <div id="clo-selection" class="clo-grid"></div>
-                    </div>
-
-                    <div id="grouped-analysis" style="display:none;">
+                    <div id="grouped-analysis" style="display:block;">
                         <div class="grouped-results-layout" style="margin-top: 16px;">
                             <div class="grouped-results-left">
                                 <div class="card" style="margin-top: 0;">
@@ -104,10 +97,6 @@
         <div id="dashboard-tab" class="tab-content">
             <div class="card">
                 <h2>📊 แดชบอร์ดวิเคราะห์ CLO</h2>
-
-                <div class="button-group" style="margin-bottom: 16px;">
-                    <button class="btn-secondary" onclick="generateMockData()">🧪 สร้างบริษัทตัวอย่าง 10 ราย</button>
-                </div>
 
                 <div id="dashboard-empty" class="empty-state" style="display:none; margin-bottom: 20px;">
                     <div class="empty-state-icon">📊</div>
@@ -150,8 +139,13 @@
                 </div>
 
                 <div class="chart-container-full">
-                    <h3>Heatmap บริษัท - CLO</h3>
+                    <h3>Heatmap บริษัท - CLO (เฉพาะ CLO ที่ match)</h3>
                     <div id="heatmap-container"></div>
+                </div>
+                
+                <div class="chart-container-full">
+                    <h3>Heatmap บริษัท - PLO (เฉพาะ PLO ที่เกี่ยวข้อง)</h3>
+                    <div id="plo-heatmap-container"></div>
                 </div>
 
                 <div class="chart-container-full">
@@ -185,12 +179,7 @@
                 <span class="close" onclick="closeModal()">&times;</span>
                 <h2 id="modal-company-name"></h2>
                 <div id="modal-company-details"></div>
-                <div id="modal-simple-editor">
-                    <h3>CLO ที่เลือก</h3>
-                    <div id="modal-clo-selection" class="clo-grid"></div>
-                </div>
-
-                <div id="modal-grouped-editor" style="display:none;">
+                <div id="modal-grouped-editor" style="display:block;">
                     <div class="grouped-results-layout" style="margin-top: 16px;">
                         <div class="grouped-results-left">
                             <div class="card" style="margin-top: 0;">
@@ -214,11 +203,32 @@
             </div>
         </div>
 
+        <div id="ai-help-modal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeAIHelpModal()">&times;</span>
+                <h2>✨ คำแนะนำจาก AI</h2>
+                <div id="ai-help-loading" style="display:none; text-align:center; padding:20px;">
+                    <p>🔄 กำลังสร้างคำแนะนำ...</p>
+                </div>
+                <div id="ai-help-content" style="display:none;">
+                    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px;">
+                        <h3 style="margin-bottom:10px;">คำแนะนำ:</h3>
+                        <div id="ai-help-text" style="white-space:pre-wrap; line-height:1.6;"></div>
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-primary" onclick="useAISuggestion()">✅ ใช้คำแนะนำนี้</button>
+                        <button class="btn-secondary" onclick="closeAIHelpModal()">ยกเลิก</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <footer>
             <p>© 2026 ระบบจับคู่บริษัทกับ CLO | ขับเคลื่อนด้วย OpenAI</p>
         </footer>
     </div>
 
     <script src="/static/app.js?v=2"></script>
+    <script src="/static/app_plo_patch.js?v=1"></script>
 </body>
 </html>
