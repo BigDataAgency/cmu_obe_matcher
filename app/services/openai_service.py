@@ -1,59 +1,18 @@
 import json
-import re
 from pathlib import Path
 from openai import OpenAI
 from app.config import get_settings
-from app.services.csv_loader import CSVLoaderService
 
 class OpenAIService:
     def __init__(self):
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key)
-        self.csv_loader = CSVLoaderService()
-
-    def _normalize_text(self, text: str) -> str:
-        return (text or "").lower()
-
-    def _tokenize(self, text: str) -> set[str]:
-        text = self._normalize_text(text)
-        return set(t for t in re.findall(r"[a-zA-Z0-9ก-๙]+", text) if len(t) >= 2)
 
     def _truncate(self, s: str, max_chars: int) -> str:
         s = (s or "").strip()
         if len(s) <= max_chars:
             return s
         return s[:max_chars].rstrip() + "…"
-
-    def _select_top_clos(
-        self,
-        clos: list[dict],
-        query_text: str,
-        *,
-        top_k: int = 300,
-        desc_max_chars: int = 240,
-    ) -> list[dict]:
-        q_tokens = self._tokenize(query_text)
-        if not clos:
-            return []
-
-        if not q_tokens:
-            picked = clos[:top_k]
-        else:
-            scored: list[tuple[int, dict]] = []
-            for clo in clos:
-                desc = clo.get("description", "")
-                d_tokens = self._tokenize(desc)
-                score = len(q_tokens & d_tokens)
-                scored.append((score, clo))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            picked = [c for _, c in scored[:top_k]]
-
-        out: list[dict] = []
-        for clo in picked:
-            clo2 = dict(clo)
-            clo2["description"] = self._truncate(clo2.get("description", ""), desc_max_chars)
-            out.append(clo2)
-        return out
 
     def _create_chat_completion(
         self,
@@ -100,12 +59,8 @@ class OpenAIService:
         requirements: str,
         culture: str = None,
         desired_traits: str = None,
+        pre_filtered_clos: list[dict] = None,
     ) -> dict:
-        clo_definitions_all = self.csv_loader.load_all_clos()
-        
-        if not clo_definitions_all:
-            raise Exception("No CLOs found in the system")
-
         company_details = f"""Company Name: {company_name}
 
 Requirements: {requirements}"""
@@ -116,15 +71,14 @@ Requirements: {requirements}"""
         if desired_traits:
             company_details += f"\n\nDesired Traits: {desired_traits}"
 
-        # Reduce prompt size: select only the most relevant CLOs and truncate descriptions.
-        clo_definitions = self._select_top_clos(
-            clo_definitions_all,
-            query_text=company_details,
-            top_k=300,
-            desc_max_chars=240,
-        )
-        if not clo_definitions:
-            raise Exception("No CLOs available after filtering")
+        if not pre_filtered_clos:
+            raise Exception("No CLOs provided. The web must send pre-filtered CLOs in the 'clos' field.")
+
+        clo_definitions = []
+        for clo in pre_filtered_clos:
+            clo2 = dict(clo)
+            clo2["description"] = self._truncate(clo2.get("description", ""), 240)
+            clo_definitions.append(clo2)
 
         # Build context with curriculum_id and course_id
         clo_context = "\n".join([

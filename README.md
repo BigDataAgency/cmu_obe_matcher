@@ -1,299 +1,485 @@
-# Company-CLO Matcher
+# Company-CLO Matcher API
 
-An AI-powered system that matches companies to relevant Course Learning Outcomes (CLOs) based on their requirements, culture, and desired traits.
+REST API for matching company job requirements to **Course Learning Outcomes (CLOs)** and **Program Learning Outcomes (PLOs)**.
 
-## Features
+---
 
-- **AI-Powered Analysis**: Uses OpenAI GPT-4o-mini or Google Gemini to analyze company details and suggest relevant CLOs
-- **Flexible LLM Provider**: Switch between OpenAI and Gemini (free tier available)
-- **Interactive CLO Selection**: Users can add or remove CLOs from AI suggestions
-- **Company Management**: Full CRUD operations for company profiles
-- **Modern Web Interface**: Clean, responsive UI for easy interaction
-- **RESTful API**: Well-documented API endpoints
-
-## Project Structure
+## User Flow Overview
 
 ```
-cmu_obe_matcher/
-├── app/
-│   ├── main.py                    # FastAPI application entry point
-│   ├── models.py                  # Pydantic models for validation
-│   ├── config.py                  # Configuration and environment variables
-│   ├── services/
-│   │   ├── openai_service.py     # OpenAI integration for CLO suggestion
-│   │   ├── gemini_service.py     # Google Gemini integration for CLO suggestion
-│   │   └── llm_factory.py        # Factory to select LLM provider
-│   └── api/
-│       └── endpoints.py           # API route handlers
-├── data/
-│   └── clo_definitions.json       # CLO definitions (15 CLOs)
-├── static/
-│   ├── index.html                 # Frontend HTML
-│   ├── styles.css                 # CSS styling
-│   └── app.js                     # JavaScript for API interaction
-├── requirements.txt               # Python dependencies
-├── .env.example                   # Example environment variables
-└── README.md                      # This file
+┌─────────────────────────────────────────────────────────┐
+│  STEP 1: Fill Company Details                           │
+│                                                         │
+│  User types company name, requirements, culture,        │
+│  desired traits manually                                │
+│                                                         │
+│  ── OR ──                                               │
+│                                                         │
+│  User presses [AI Suggest] button                       │
+│  → Call POST /api/v1/suggest-company-details            │
+│  → AI fills in requirements, culture, desired_traits    │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│  STEP 2: Match CLOs                                     │
+│                                                         │
+│  User picks CLOs manually from the CLO list             │
+│  → Call GET /api/v1/clos  (to populate CLO list)        │
+│                                                         │
+│  ── OR ──                                               │
+│                                                         │
+│  User presses [AI Analyze] button                       │
+│  → Call POST /api/v1/analyze-company-grouped            │
+│  → AI suggests CLOs grouped by category                 │
+│  → User can edit/confirm the suggestions                │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│  STEP 3: Submit → Get PLO Mappings                      │
+│                                                         │
+│  User confirms final CLO selection                      │
+│  → Call POST /api/v1/submit-company-with-clos           │
+│  → API returns CLO→PLO mappings + PLO details           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Setup Instructions
+---
 
-### 1. Clone the Repository
+## Quick Start
+
+### 1. Requirements
+- Python 3.10+
+- OpenAI API Key
+
+### 2. Setup
 
 ```bash
 cd cmu_obe_matcher
-```
 
-### 2. Create Virtual Environment
-
-```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-### 3. Install Dependencies
-
-```bash
 pip install -r requirements.txt
-```
 
-### 4. Configure Environment Variables
-
-```bash
 cp .env.example .env
+# Edit .env → set OPENAI_API_KEY
 ```
 
-Edit `.env` and configure your preferred LLM provider:
-
-#### Option A: Using Gemini (Free)
-
-```env
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=your-gemini-api-key-here
-GEMINI_MODEL=gemini-1.5-flash
+### 3. .env file
+```
+OPENAI_API_KEY=sk-...your-key-here...
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
-Get your free Gemini API key from: https://aistudio.google.com/app/apikey
-
-#### Option B: Using OpenAI
-
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-your-actual-api-key-here
-OPENAI_MODEL=gpt-4o-mini
-```
-
-### 5. Run the Application
-
+### 4. Run
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The application will be available at `http://localhost:8000`
+### 5. Interactive Docs
+- Swagger UI: **http://localhost:8000/docs**
+- ReDoc: **http://localhost:8000/redoc**
 
-## API Documentation
+---
 
-Once the server is running, visit:
-- **Interactive API Docs**: http://localhost:8000/docs
-- **Alternative Docs**: http://localhost:8000/redoc
+## All Endpoints
 
-## API Endpoints
+| Method | Path | When to call |
+|--------|------|-------------|
+| POST | `/api/v1/suggest-company-details` | Step 1 — User presses [AI Suggest] button |
+| GET | `/api/v1/clos` | Step 2 — Load CLO list for user to pick from |
+| POST | `/api/v1/analyze-company-grouped` | Step 2 — User presses [AI Analyze] button |
+| POST | `/api/v1/submit-company-with-clos` | Step 3 — User submits final CLO selection |
+| GET | `/api/v1/companies` | Extra — List all saved companies |
+| GET | `/api/v1/companies/{company_name}` | Extra — Get one saved company |
+| DELETE | `/api/v1/companies/{company_name}` | Extra — Delete a company |
 
-### 1. Get All CLOs
+---
 
-**GET** `/api/v1/clos`
+## Step 1 — AI Suggest Company Details
 
-Returns all available Course Learning Outcomes.
+### POST `/api/v1/suggest-company-details`
+
+Call when user presses **[AI Suggest]** button. AI generates requirements, culture, and desired traits based on company name.
+
+**Request:**
+```json
+{
+  "company_name": "บริษัท ABC จำกัด",
+  "brief_description": "บริษัท IT ด้าน fintech สัญชาติไทย",
+  "partial_requirements": "ต้องการโปรแกรมเมอร์..."
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `company_name` | ✅ | Company name |
+| `brief_description` | ❌ | Short hint about the company (industry, size, etc.) |
+| `partial_requirements` | ❌ | What the user has already typed (AI will continue from here) |
+
+**Response:**
+```json
+{
+  "company_name": "บริษัท ABC จำกัด",
+  "suggested_requirements": "ต้องการวิศวกรซอฟต์แวร์ที่มีทักษะ Python, SQL, REST API และมีประสบการณ์ด้าน fintech อย่างน้อย 1 ปี",
+  "suggested_culture": "วัฒนธรรมองค์กรที่เน้นการเรียนรู้ต่อเนื่อง ทำงานแบบ agile และให้ความสำคัญกับ work-life balance",
+  "suggested_desired_traits": "มีความรับผิดชอบสูง สื่อสารได้ดี ทำงานเป็นทีมได้ และสามารถทำงานภายใต้แรงกดดันได้",
+  "message": "Successfully generated suggestions for บริษัท ABC จำกัด"
+}
+```
+
+> ⚠️ Calls OpenAI — takes ~5 seconds.
+
+---
+
+## Step 2A — Load CLO List (for manual selection)
+
+### GET `/api/v1/clos`
+
+Call once when the page loads to populate the CLO picker/dropdown.
 
 **Response:**
 ```json
 {
   "clos": [
     {
-      "id": "CLO01",
-      "name": "Python Programming",
-      "description": "Proficiency in Python programming..."
+      "id": "11307",
+      "no": "27",
+      "name": "CLO 27",
+      "description": "สามารถทำงานร่วมกับผู้อื่นได้อย่างมีประสิทธิภาพ",
+      "curriculum_id": "70",
+      "course_id": "1621"
     },
-    ...
-  ],
-  "total": 15
-}
-```
-
-### 2. Analyze Company (Grouped)
-
-**POST** `/api/v1/analyze-company-grouped`
-
-Analyzes company details and suggests relevant CLOs using AI.
-
-**Request Body:**
-```json
-{
-  "company_name": "Tech Startup Inc",
-  "requirements": "Looking for graduates with strong programming skills...",
-  "culture": "Fast-paced, innovative environment",
-  "desired_traits": "Problem solvers, team players"
-}
-```
-
-**Response:**
-```json
-{
-  "company_name": "Tech Startup Inc",
-  "requirements": "Looking for graduates with strong programming skills...",
-  "culture": "Fast-paced, innovative environment",
-  "desired_traits": "Problem solvers, team players",
-  "ai_suggested_clos": ["CLO01", "CLO02", "CLO05", "CLO10"],
-  "ai_reasoning": "Based on the requirements, CLO01 (Python) is essential...",
-  "message": "Successfully analyzed company details for Tech Startup Inc"
-}
-```
-
-### 3. List All Companies
-
-**GET** `/api/v1/companies`
-
-Returns all company profiles.
-
-**Response:**
-```json
-{
-  "companies": [
     {
-      "company_name": "Tech Startup Inc",
-      "requirements": "...",
-      "culture": "...",
-      "desired_traits": "...",
-      "ai_suggested_clos": ["CLO01", "CLO02"],
-      "selected_clos": ["CLO01", "CLO02", "CLO03"],
-      "ai_reasoning": "...",
-      "created_at": "2026-02-06T08:36:00Z",
-      "updated_at": "2026-02-06T09:15:00Z"
+      "id": "11308",
+      "no": "28",
+      "name": "CLO 28",
+      "description": "สามารถสื่อสารได้หลากหลายรูปแบบอย่างเหมาะสมและมีประสิทธิภาพ",
+      "curriculum_id": "70",
+      "course_id": "1621"
     }
   ],
-  "total": 1
+  "total": 12000
 }
 ```
 
-### 4. Get Company Details
+> Store the full CLO list on the frontend. When user selects CLOs, keep the full CLO objects (not just IDs) — you'll need them for Step 3.
 
-**GET** `/api/v1/companies/{company_name}`
+---
 
-Returns details for a specific company.
+## Step 2B — AI Analyze (suggest CLOs automatically)
 
-### 5. Update Company Groups
+### POST `/api/v1/analyze-company-grouped`
 
-**PUT** `/api/v1/companies/{company_name}/groups`
+Call when user presses **[AI Analyze]** button. Web sends company details **+ pre-filtered CLO objects**. AI groups and selects the most relevant ones.
 
-Updates the selected groups for a company.
-
-**Request Body:**
+**Request:**
 ```json
 {
-  "selected_groups": ["Group A", "Group B"]
+  "company_name": "บริษัท ABC จำกัด",
+  "requirements": "ต้องการวิศวกรซอฟต์แวร์ที่มีทักษะ Python, SQL และการทำงานเป็นทีม",
+  "culture": "วัฒนธรรมองค์กรที่เน้นการเรียนรู้และนวัตกรรม",
+  "desired_traits": "มีความรับผิดชอบ สื่อสารดี ทำงานภายใต้แรงกดดันได้",
+  "clos": [
+    {
+      "id": "11281",
+      "no": "1",
+      "description": "มีความซื่อสัตย์ มีวินัย ตรงต่อเวลา",
+      "curriculum_id": "70",
+      "course_id": "1621"
+    },
+    {
+      "id": "11282",
+      "no": "2",
+      "description": "มีความรับผิดชอบต่อตนเองและสังคม",
+      "curriculum_id": "70",
+      "course_id": "1621"
+    },
+    {
+      "id": "456",
+      "no": "1",
+      "description": "analyze the concepts and principles related to healthcare quality",
+      "curriculum_id": "48",
+      "course_id": "174"
+    }
+  ]
 }
 ```
 
-### 6. Delete Company
+| Field | Required | Description |
+|-------|----------|-------------|
+| `company_name` | ✅ | Company name |
+| `requirements` | ✅ | Job requirements (from Step 1) |
+| `culture` | ❌ | Company culture (from Step 1) |
+| `desired_traits` | ❌ | Desired traits (from Step 1) |
+| `clos` | ✅ | Pre-filtered CLO objects from the web — AI will only consider these |
+| `clos[].id` | ✅ | CLO ID |
+| `clos[].no` | ❌ | CLO number within course |
+| `clos[].description` | ✅ | CLO description |
+| `clos[].curriculum_id` | ❌ | Curriculum ID |
+| `clos[].course_id` | ❌ | Course ID |
 
-**DELETE** `/api/v1/companies/{company_name}`
+> **How pre-filtering works:** The web fetches all CLOs via `GET /clos`, applies its own filter (e.g. by keyword, curriculum, or user selection), then sends only the relevant subset to this endpoint. The AI then groups and ranks within that subset — much faster and more accurate than searching all 10,000+ CLOs.
 
-Deletes a company profile.
-
-## Usage Example
-
-### Using the Web Interface
-
-1. Navigate to `http://localhost:8000`
-2. Click "➕ Add Company"
-3. Fill in company details (name, requirements, culture, traits)
-4. Click "🔍 Analyze with AI"
-5. Review AI-suggested CLOs
-6. Add or remove CLOs as needed
-7. Click "💾 Save Company"
-8. View all companies in the "🏢 Companies" tab
-
-### Using cURL
-
-```bash
-# Analyze a company (grouped)
-curl -X POST "http://localhost:8000/api/v1/analyze-company-grouped" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "company_name": "Tech Startup",
-    "requirements": "Python, data analysis, SQL",
-    "culture": "Fast-paced, collaborative",
-    "desired_traits": "Problem solving, communication"
-  }'
+**Response:**
+```json
+{
+  "company_name": "บริษัท ABC จำกัด",
+  "requirements": "ต้องการวิศวกรซอฟต์แวร์...",
+  "culture": "วัฒนธรรมองค์กร...",
+  "desired_traits": "มีความรับผิดชอบ...",
+  "groups": [
+    {
+      "group_id": "grp_1",
+      "group_name": "ทักษะการสื่อสารและการทำงานร่วมกัน",
+      "summary": "CLO ที่เน้นการสื่อสารและทีมเวิร์ค",
+      "evidence": ["ต้องการการทำงานเป็นทีม", "สื่อสารดี"],
+      "suggested_clos": ["11307", "11308"],
+      "selected_clos": ["11307", "11308"],
+      "reasoning": "CLO เหล่านี้เน้นทักษะการสื่อสารและการทำงานร่วมกัน"
+    },
+    {
+      "group_id": "grp_2",
+      "group_name": "ทักษะเทคนิคและการวิเคราะห์",
+      "summary": "CLO ที่เน้นทักษะด้านเทคนิค",
+      "evidence": ["Python", "SQL"],
+      "suggested_clos": ["456", "457"],
+      "selected_clos": ["456", "457"],
+      "reasoning": "CLO เหล่านี้เน้นการวิเคราะห์และทักษะเทคนิค"
+    }
+  ],
+  "all_suggested_clos": ["11307", "11308", "456", "457"],
+  "all_selected_clos": ["11307", "11308", "456", "457"],
+  "clo_context": [
+    { "clo_id": "11307", "curriculum_id": 70, "course_id": 1621 }
+  ],
+  "clo_plo_mappings": [
+    { "clo_id": "11307", "plo_id": "246", "curriculum_id": "70", "course_id": "1621", "is_map": true }
+  ],
+  "mapped_plos": [
+    {
+      "id": "246",
+      "curriculum_id": "70",
+      "name": "plo1",
+      "name_en": null,
+      "detail": "Read and Understand Relevant Information and Data",
+      "plo_level": "1",
+      "parent_plo_id": null
+    }
+  ],
+  "message": "Successfully analyzed..."
+}
 ```
 
-## CLO Definitions
+**What to do with this response:**
+- Show `groups` to the user — let them review/edit which CLOs to keep
+- Each group has `group_name`, `reasoning`, and `selected_clos`
+- User can add/remove CLOs from each group
+- When user confirms → go to Step 3 with the final CLO list
 
-The system uses 15 Course Learning Outcomes (CLOs):
+> ⚠️ Calls OpenAI — takes 5–20 seconds.
 
-1. **CLO01**: Python Programming
-2. **CLO02**: Data Analysis
-3. **CLO03**: Teamwork
-4. **CLO04**: Communication
-5. **CLO05**: Problem Solving
-6. **CLO06**: Database Management
-7. **CLO07**: Machine Learning
-8. **CLO08**: Web Development
-9. **CLO09**: Cloud Computing
-10. **CLO10**: Software Engineering
-11. **CLO11**: Business Analytics
-12. **CLO12**: Project Management
-13. **CLO13**: Data Visualization
-14. **CLO14**: Research Skills
-15. **CLO15**: Ethics and Professionalism
+---
 
-## How It Works
+## Step 3 — Submit Final CLOs → Get PLO Mappings
 
-1. **Company Analysis**: User inputs company details (requirements, culture, desired traits)
-2. **AI Processing**: OpenAI or Gemini analyzes the details and identifies relevant CLOs
-3. **User Refinement**: User can add or remove CLOs from AI suggestions
-4. **Storage**: Company profile with selected CLOs is stored in memory
+### POST `/api/v1/submit-company-with-clos`
 
-## LLM Provider Selection
+Call when user **confirms their final CLO selection** (whether picked manually or from AI suggestions). Returns PLO mappings — no AI call, fast response.
 
-The system supports two LLM providers:
-
-- **Gemini (Recommended for Free Tier)**: Google's Gemini 1.5 Flash offers free API access with generous quotas
-- **OpenAI**: GPT-4o-mini provides high-quality analysis (paid API)
-
-Switch between providers by changing `LLM_PROVIDER` in your `.env` file. Both providers use the same interface, so no code changes are needed.
-
-## Technical Stack
-
-- **FastAPI**: Modern web framework for building APIs
-- **OpenAI / Gemini**: GPT-4o-mini or Gemini 1.5 Flash for intelligent company analysis
-- **Pydantic**: Data validation using Python type annotations
-- **Uvicorn**: ASGI server for running FastAPI
-- **Vanilla JavaScript**: Frontend interaction without heavy frameworks
-
-## Development
-
-### Running in Development Mode
-
-```bash
-uvicorn app.main:app --reload
+**Request:**
+```json
+{
+  "company_name": "บริษัท ABC จำกัด",
+  "requirements": "ต้องการวิศวกรซอฟต์แวร์ที่มีทักษะ Python, SQL และการทำงานเป็นทีม",
+  "culture": "วัฒนธรรมองค์กรที่เน้นการเรียนรู้และนวัตกรรม",
+  "desired_traits": "มีความรับผิดชอบ สื่อสารดี ทำงานภายใต้แรงกดดันได้",
+  "clos": [
+    {
+      "id": "11307",
+      "no": "27",
+      "description": "สามารถทำงานร่วมกับผู้อื่นได้อย่างมีประสิทธิภาพ",
+      "curriculum_id": "70",
+      "course_id": "1621"
+    },
+    {
+      "id": "11308",
+      "no": "28",
+      "description": "สามารถสื่อสารได้หลากหลายรูปแบบอย่างเหมาะสมและมีประสิทธิภาพ",
+      "curriculum_id": "70",
+      "course_id": "1621"
+    },
+    {
+      "id": "456",
+      "no": "1",
+      "description": "analyze the concepts and principles related to healthcare quality",
+      "curriculum_id": "48",
+      "course_id": "174"
+    }
+  ]
+}
 ```
 
-### Code Style
+| Field | Required | Description |
+|-------|----------|-------------|
+| `company_name` | ✅ | Company name |
+| `requirements` | ✅ | Job requirements |
+| `culture` | ❌ | Company culture |
+| `desired_traits` | ❌ | Desired traits |
+| `clos` | ✅ | Final list of CLO objects user confirmed |
+| `clos[].id` | ✅ | CLO ID |
+| `clos[].no` | ❌ | CLO number (e.g. "27") |
+| `clos[].description` | ✅ | CLO description |
+| `clos[].curriculum_id` | ❌ | Curriculum ID |
+| `clos[].course_id` | ❌ | Course ID |
 
-The project follows PEP 8 guidelines.
+**Response:**
+```json
+{
+  "company_name": "บริษัท ABC จำกัด",
+  "requirements": "ต้องการวิศวกรซอฟต์แวร์...",
+  "culture": "วัฒนธรรมองค์กร...",
+  "desired_traits": "มีความรับผิดชอบ...",
+  "clos": [
+    {
+      "id": "11307",
+      "no": "27",
+      "description": "สามารถทำงานร่วมกับผู้อื่นได้อย่างมีประสิทธิภาพ",
+      "curriculum_id": "70",
+      "course_id": "1621"
+    }
+  ],
+  "clo_plo_mappings": [
+    { "clo_id": "11307", "plo_id": "246", "curriculum_id": "70", "course_id": "1621", "is_map": true },
+    { "clo_id": "11307", "plo_id": "247", "curriculum_id": "70", "course_id": "1621", "is_map": true },
+    { "clo_id": "11308", "plo_id": "246", "curriculum_id": "70", "course_id": "1621", "is_map": true },
+    { "clo_id": "456",   "plo_id": "506", "curriculum_id": "48", "course_id": "174",  "is_map": true }
+  ],
+  "mapped_plos": [
+    {
+      "id": "246",
+      "curriculum_id": "70",
+      "name": "plo1",
+      "name_en": null,
+      "detail": "Read and Understand Relevant Information and Data",
+      "plo_level": "1",
+      "parent_plo_id": null
+    },
+    {
+      "id": "247",
+      "curriculum_id": "70",
+      "name": "plo2",
+      "name_en": null,
+      "detail": "Analyze and Apply Knowledge to Solve Problems",
+      "plo_level": "2",
+      "parent_plo_id": "246"
+    },
+    {
+      "id": "506",
+      "curriculum_id": "48",
+      "name": "plo1",
+      "name_en": null,
+      "detail": "Healthcare quality management principles",
+      "plo_level": "1",
+      "parent_plo_id": null
+    }
+  ],
+  "message": "Received 3 CLOs for 'บริษัท ABC จำกัด'. Found 3 mapped PLOs via 4 mappings."
+}
+```
+
+**How to use the response:**
+```javascript
+// Build CLO → PLOs lookup
+const cloToPLOs = {};
+data.clo_plo_mappings.forEach(mapping => {
+  if (!cloToPLOs[mapping.clo_id]) cloToPLOs[mapping.clo_id] = [];
+  const plo = data.mapped_plos.find(p => p.id === mapping.plo_id);
+  if (plo) cloToPLOs[mapping.clo_id].push(plo);
+});
+
+// Get PLOs for a specific CLO
+console.log(cloToPLOs["11307"]);
+// → [{ id: "246", name: "plo1", plo_level: "1", ... }, { id: "247", plo_level: "2", ... }]
+
+// Separate main PLOs (level 1) vs sub-PLOs (level 2)
+const mainPLOs = data.mapped_plos.filter(p => p.plo_level === "1");
+const subPLOs  = data.mapped_plos.filter(p => p.plo_level === "2");
+```
+
+> ✅ No AI call — fast response (< 1 second).
+
+---
+
+## Data Models Reference
+
+### CLO Object
+```typescript
+{
+  id: string            // CLO unique ID — use as key
+  no: string | null     // CLO number within course — display this to users
+  name: string | null   // "CLO {no}"
+  description: string   // Full CLO description text
+  curriculum_id: string | null
+  course_id: string | null
+}
+```
+
+### PLO Object
+```typescript
+{
+  id: string               // PLO unique ID
+  curriculum_id: string
+  name: string             // e.g. "plo1", "plo2"
+  name_en: string | null
+  detail: string           // Full PLO description text
+  plo_level: "1" | "2"    // "1" = main PLO, "2" = sub-PLO
+  parent_plo_id: string | null  // set when plo_level = "2"
+}
+```
+
+### CLO-PLO Mapping Object
+```typescript
+{
+  clo_id: string      // CLO ID
+  plo_id: string      // PLO ID linked to this CLO
+  curriculum_id: string
+  course_id: string
+  is_map: true        // always true (pre-filtered)
+}
+```
+
+---
 
 ## Notes
 
-- Company data is stored in-memory and will be lost when the server restarts
-- For production use, consider implementing database persistence
-- Either OpenAI or Gemini API key is required for the system to function
-- Gemini offers a free tier, making it ideal for development and testing
+- **Data is in-memory** — restarting the server clears all saved companies.
+- **CORS is open** (`*`) — restrict `allow_origins` in production.
+- `submit-company-with-clos` is **fast** (no AI, just CSV lookup).
+- `suggest-company-details` and `analyze-company-grouped` are **slow** (call OpenAI, 5–20 sec).
 
-## License
+---
 
-MIT License
+## Project Structure
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+```
+cmu_obe_matcher/
+├── app/
+│   ├── main.py              # FastAPI entry point
+│   ├── config.py            # Reads .env settings
+│   ├── models.py            # All request/response schemas
+│   ├── api/endpoints.py     # All API routes
+│   └── services/
+│       ├── csv_loader.py    # Loads CLO/PLO data from CSV files
+│       ├── openai_service.py# OpenAI integration
+│       └── llm_factory.py   # Returns OpenAI service instance
+├── data/
+│   ├── tlic_obe_public_clo.csv
+│   ├── tlic_obe_public_plo.csv
+│   ├── tlic_obe_public_clo_has_plos.csv
+│   └── tlic_obe_public_course_curriculum.csv
+├── .env                     # Your API keys (do not commit)
+├── .env.example
+├── requirements.txt
+└── README.md
+```

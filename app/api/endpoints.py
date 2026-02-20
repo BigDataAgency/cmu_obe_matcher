@@ -14,7 +14,10 @@ from app.models import (
     PLOInfo,
     SuggestCompanyDetailsRequest,
     SuggestCompanyDetailsResponse,
-    CLOWithContext
+    CLOWithContext,
+    CLOInput,
+    CompanyWithCLOsRequest,
+    CompanyWithCLOsResponse,
 )
 from app.services.llm_factory import get_llm_service
 from app.services.csv_loader import CSVLoaderService
@@ -102,11 +105,27 @@ async def suggest_company_details(request: SuggestCompanyDetailsRequest):
 async def analyze_company_grouped(request: CompanyDetailsRequest):
     try:
         llm_service = get_llm_service()
+
+        # Convert CLOInput objects to dicts if web provided pre-filtered CLOs
+        pre_filtered_clos = None
+        if request.clos:
+            pre_filtered_clos = [
+                {
+                    "id": clo.id,
+                    "no": clo.no,
+                    "description": clo.description,
+                    "curriculum_id": clo.curriculum_id or "",
+                    "course_id": clo.course_id or "",
+                }
+                for clo in request.clos
+            ]
+
         result = llm_service.suggest_grouped_clos_for_company(
             company_name=request.company_name,
             requirements=request.requirements,
             culture=request.culture,
             desired_traits=request.desired_traits,
+            pre_filtered_clos=pre_filtered_clos,
         )
 
         groups_raw = result.get("groups", [])
@@ -220,6 +239,75 @@ async def analyze_company_grouped(request: CompanyDetailsRequest):
             status_code=500,
             detail=f"{str(e)}. If this is an authentication error, make sure your .env contains the correct API key (OPENAI_API_KEY or GEMINI_API_KEY).",
         )
+
+@router.post("/submit-company-with-clos", response_model=CompanyWithCLOsResponse)
+async def submit_company_with_clos(request: CompanyWithCLOsRequest):
+    """
+    Receive company details + CLO objects from the web app.
+    Skips AI matching — uses the provided CLOs directly.
+    Returns CLO-PLO mappings and PLO details.
+    """
+    csv_loader = CSVLoaderService()
+
+    clo_ids = [clo.id for clo in request.clos]
+
+    # Load CLO-PLO mappings for the provided CLO IDs
+    clo_plo_mappings = csv_loader.load_clo_plo_mappings(
+        clo_ids=[str(cid) for cid in clo_ids],
+        is_map_only=True
+    )
+
+    # Load PLO details
+    plo_ids = list(set([m['plo_id'] for m in clo_plo_mappings if m.get('plo_id')]))
+    plo_data = csv_loader.load_plos(plo_ids=plo_ids) if plo_ids else []
+    mapped_plos = [
+        PLOInfo(
+            id=plo['id'],
+            curriculum_id=plo['curriculum_id'],
+            name=plo['name'],
+            name_en=plo['name_en'] if plo['name_en'] else None,
+            detail=plo['detail'],
+            plo_level=plo['plo_level'],
+            parent_plo_id=plo['parent_plo_id'] if plo['parent_plo_id'] else None
+        )
+        for plo in plo_data
+    ]
+
+    # Save to company store
+    now = _now_iso()
+    existing = company_store.get(request.company_name)
+    created_at = existing["created_at"] if isinstance(existing, dict) and "created_at" in existing else now
+
+    company_store[request.company_name] = {
+        "company_name": request.company_name,
+        "requirements": request.requirements,
+        "culture": request.culture,
+        "desired_traits": request.desired_traits,
+        "ai_suggested_clos": clo_ids,
+        "selected_clos": clo_ids,
+        "ai_reasoning": "CLOs provided directly by web application.",
+        "groups": [],
+        "clo_context": [
+            {"clo_id": clo.id, "curriculum_id": int(clo.curriculum_id or 0), "course_id": int(clo.course_id or 0)}
+            for clo in request.clos
+        ],
+        "clo_plo_mappings": clo_plo_mappings,
+        "mapped_plos": [p.model_dump() for p in mapped_plos],
+        "created_at": created_at,
+        "updated_at": now,
+    }
+
+    return CompanyWithCLOsResponse(
+        company_name=request.company_name,
+        requirements=request.requirements,
+        culture=request.culture,
+        desired_traits=request.desired_traits,
+        clos=request.clos,
+        clo_plo_mappings=clo_plo_mappings,
+        mapped_plos=mapped_plos,
+        message=f"Received {len(request.clos)} CLOs for '{request.company_name}'. Found {len(mapped_plos)} mapped PLOs via {len(clo_plo_mappings)} mappings.",
+    )
+
 
 @router.get("/companies", response_model=CompaniesListResponse)
 async def list_companies():

@@ -16,11 +16,14 @@ class CompanyDetailsRequest(BaseModel):
     requirements: str = Field(..., description="Job requirements and technical skills needed")
     culture: Optional[str] = Field(None, description="Company culture and work environment")
     desired_traits: Optional[str] = Field(None, description="Desired personality traits and soft skills")
+    clos: Optional[List["CLOInput"]] = Field(None, description="Pre-filtered CLO objects from the web. If provided, AI will only consider these CLOs instead of loading all CLOs from the system.")
+
 
 class CLOWithContext(BaseModel):
     clo_id: str = Field(..., description="CLO ID")
     curriculum_id: int = Field(..., description="Curriculum ID this CLO belongs to")
     course_id: int = Field(..., description="Course ID this CLO belongs to")
+
 
 class PLOInfo(BaseModel):
     id: str = Field(..., description="PLO ID")
@@ -30,6 +33,33 @@ class PLOInfo(BaseModel):
     detail: str = Field(..., description="PLO detail/description")
     plo_level: str = Field(..., description="PLO level (1=top-level, 2=sub-PLO)")
     parent_plo_id: Optional[str] = Field(None, description="Parent PLO ID if this is a sub-PLO")
+
+
+class CLOInput(BaseModel):
+    id: str = Field(..., description="CLO unique ID")
+    no: Optional[str] = Field(None, description="CLO number within its course (e.g. '1', '2', '3')")
+    description: str = Field(..., description="CLO description text")
+    curriculum_id: Optional[str] = Field(None, description="Curriculum ID this CLO belongs to")
+    course_id: Optional[str] = Field(None, description="Course ID this CLO belongs to")
+
+
+class CompanyWithCLOsRequest(BaseModel):
+    company_name: str = Field(..., description="Name of the company")
+    requirements: str = Field(..., description="Job requirements and technical skills needed")
+    culture: Optional[str] = Field(None, description="Company culture and work environment")
+    desired_traits: Optional[str] = Field(None, description="Desired personality traits and soft skills")
+    clos: List[CLOInput] = Field(..., description="List of CLO objects selected by the web application")
+
+
+class CompanyWithCLOsResponse(BaseModel):
+    company_name: str
+    requirements: str
+    culture: Optional[str]
+    desired_traits: Optional[str]
+    clos: List[CLOInput] = Field(..., description="CLOs as provided by the web")
+    clo_plo_mappings: List[dict] = Field(default_factory=list, description="CLO to PLO mappings from CSV")
+    mapped_plos: List[PLOInfo] = Field(default_factory=list, description="PLO details for all mapped PLOs")
+    message: str
 
 class CompanyProfile(BaseModel):
     company_name: str
